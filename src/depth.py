@@ -134,7 +134,8 @@ xout_disp = pipeline.create(dai.node.XLinkOut)
 xout_disp.setStreamName("disparity")
 stereo.disparity.link(xout_disp.input)
 
-with dai.Device(pipeline, usb2Mode=True) as device:
+with dai.Device() as device:
+    device.startPipeline()
     cams = device.getConnectedCameras()
     depth_enabled = dai.CameraBoardSocket.LEFT in cams and dai.CameraBoardSocket.RIGHT in cams
     if not depth_enabled:
