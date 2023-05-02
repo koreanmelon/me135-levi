@@ -6,10 +6,19 @@ import cv2
 import depthai as dai
 import numpy as np
 
-jet_custom = cv2.applyColorMap(np.arange(256, dtype=np.uint8), cv2.COLORMAP_JET)
+jet_custom = cv2.applyColorMap(
+    np.arange(256, dtype=np.uint8),
+    cv2.COLORMAP_JET
+)
 jet_custom[0] = [0, 0, 0]
 
-blob = dai.OpenVINO.Blob(blobconverter.from_zoo(name="deeplab_v3_mnv2_256x256", zoo_type="depthai", shaves=6))
+blob = dai.OpenVINO.Blob(
+    blobconverter.from_zoo(
+        name="deeplab_v3_mnv2_256x256",
+        zoo_type="depthai",
+        shaves=6
+    )
+)
 INPUT_SHAPE = blob.networkInputs['Input'].dims[:2]
 TARGET_SHAPE = (400, 400)
 
@@ -60,7 +69,7 @@ class HostSync:
                 time_diff = abs(obj['msg'].getTimestamp() - ts)
                 if time_diff < timedelta(milliseconds=33):
                     synced[name] = obj['msg']
-                    print(f"{name}: {i}/{len(arr)}")
+                    # print(f"{name}: {i}/{len(arr)}")
                     break
         if len(synced) == 3:
             def remove(t1, t2):
@@ -130,11 +139,19 @@ with dai.Device(pipeline, usb2Mode=True) as device:
     depth_enabled = dai.CameraBoardSocket.LEFT in cams and dai.CameraBoardSocket.RIGHT in cams
     if not depth_enabled:
         raise RuntimeError(
-            "Unable to run this experiment on device without depth capabilities! (Available cameras: {})".format(cams))
-    device.startPipeline(pipeline)
-    q_color = device.getOutputQueue(name="cam", maxSize=4, blocking=False)  # type: ignore
-    q_disp = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)  # type: ignore
-    q_nn = device.getOutputQueue(name="nn", maxSize=4, blocking=False)  # type: ignore
+            "Unable to run this experiment on device without depth capabilities! (Available cameras: {})".format(
+                cams)
+        )
+
+    q_color = device.getOutputQueue(  # type: ignore
+        name="cam", maxSize=4, blocking=False
+    )
+    q_disp = device.getOutputQueue(  # type: ignore
+        name="disparity", maxSize=4, blocking=False
+    )
+    q_nn = device.getOutputQueue(  # type: ignore
+        name="nn", maxSize=4, blocking=False
+    )
 
     fps = FPSHandler()
     sync = HostSync()
@@ -168,8 +185,14 @@ with dai.Device(pipeline, usb2Mode=True) as device:
             frame = cv2.resize(frame, TARGET_SHAPE)
             frames['frame'] = frame
             frame = cv2.addWeighted(frame, 1, output_colors, 0.5, 0)
-            cv2.putText(frame, "Fps: {:.2f}".format(fps.fps()),
-                        (2, frame.shape[0] - 4), cv2.FONT_HERSHEY_TRIPLEX, 0.4, color=(255, 255, 255))
+            cv2.putText(
+                frame,
+                f"FPS: {fps.fps():.2f}",
+                (2, frame.shape[0] - 4),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color=(255, 255, 255)
+            )
             frames['colored_frame'] = frame
 
             disp_frame = msgs["depth"].getFrame()
@@ -181,12 +204,15 @@ with dai.Device(pipeline, usb2Mode=True) as device:
 
             multiplier = get_multiplier(lay1)
             multiplier = cv2.resize(multiplier, TARGET_SHAPE)
-            depth_overlay = disp_frame * multiplier
+            depth_overlay = disp_frame * multiplier  # type: ignore
             frames['cutout'] = cv2.applyColorMap(depth_overlay, jet_custom)
 
         if len(frames) == 4:
-            show = np.concatenate((frames['colored_frame'], frames['cutout'], frames['depth']), axis=1)
-            cv2.imshow("Combined frame", show)
+            show = np.concatenate(
+                (frames['colored_frame'], frames['cutout'], frames['depth']),
+                axis=1
+            )
+            cv2.imshow("Colored | Cutout | Depth", show)
 
         if cv2.waitKey(1) == ord('q'):
             break
