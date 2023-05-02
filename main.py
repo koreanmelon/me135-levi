@@ -12,7 +12,7 @@ from src.fps_handler import FPSHandler
 ################
 #### Config ####
 ################
-config = {
+CONFIG = {
     "display": {
         "font": cv2.FONT_HERSHEY_SIMPLEX,
         "line_type": cv2.LINE_AA,
@@ -33,199 +33,157 @@ config = {
         "mono_cam": {
             "resolution": dai.MonoCameraProperties.SensorResolution.THE_480_P,
             "fps": 30
+        },
+        "spatial_calc": {
+            "roi": {
+                "top_left": dai.Point2f(0.4, 0.4),
+                "bottom_right": dai.Point2f(0.6, 0.6)
+            },
+            "depth_thresholds": {
+                "lower_threshold": 100,
+                "upper_threshold": 10000
+            },
+            "algo": dai.SpatialLocationCalculatorAlgorithm.MEDIAN
         }
     }
 }
 
 image_size = (720, 1280)  # (height, width)
 X_shape = (3, *image_size)
-blur_size = (25, 25)
+blur_size = (15, 15)
 
 H_thresh = 10
 S_thresh = (250, 255)
 V_thresh = (0, 255)
 thresh = 25
 
-jet_custom = cv2.applyColorMap(
-    np.arange(256, dtype=np.uint8),
-    cv2.COLORMAP_JET
-)
-jet_custom[0] = [0, 0, 0]
 
-blob = dai.OpenVINO.Blob(
-    blobconverter.from_zoo(
-        name="deeplab_v3_mnv2_256x256",
-        zoo_type="depthai",
-        shaves=6
+def extract_bounding_box(color_frame: npt.NDArray, thresh: dict):
+    frame = color_frame.copy()
+    hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+    red_lower = np.array([0, S_thresh[0], V_thresh[0]])
+    red_upper = np.array([H_thresh, S_thresh[1], V_thresh[1]])
+    mask_right = cv2.inRange(hsv_frame, red_lower, red_upper)
+
+    red_lower = np.array([180 - H_thresh, S_thresh[0], V_thresh[0]])
+    red_upper = np.array([180, S_thresh[1], V_thresh[1]])
+    mask_left = cv2.inRange(hsv_frame, red_lower, red_upper)
+
+    mask = mask_right + mask_left  # type: ignore
+    frame[np.where(mask == 0)] = 0
+
+    # Post processing
+    frame = cv2.blur(
+        src=frame,
+        ksize=blur_size
     )
-)
-INPUT_SHAPE = blob.networkInputs['Input'].dims[:2]
-TARGET_SHAPE = (400, 400)
-
-
-def decode_deeplabv3p(output_tensor):
-    class_colors = [[0, 0, 0],  [0, 255, 0]]
-    class_colors = np.asarray(class_colors, dtype=np.uint8)
-
-    output = output_tensor.reshape(*INPUT_SHAPE)
-    output_colors = np.take(class_colors, output, axis=0)
-    return output_colors
-
-
-def get_multiplier(output_tensor):
-    class_binary = [[0], [1]]
-    class_binary = np.asarray(class_binary, dtype=np.uint8)
-    output = output_tensor.reshape(*INPUT_SHAPE)
-    output_colors = np.take(class_binary, output, axis=0)
-    return output_colors
-
-
-def crop_to_square(frame):
-    height = frame.shape[0]
-    width = frame.shape[1]
-    delta = int((width-height) / 2)
-    return frame[0:height, delta:width-delta]
-
-
-class HostSync:
-    def __init__(self):
-        self.arrays = {}
-
-    def add_msg(self, name, msg):
-        if name not in self.arrays:
-            self.arrays[name] = []
-        self.arrays[name].append({'msg': msg})
-        ts = msg.getTimestamp()
-        synced = {}
-        for name, arr in self.arrays.items():
-            for i, obj in enumerate(arr):
-                time_diff = abs(obj['msg'].getTimestamp() - ts)
-                if time_diff < timedelta(milliseconds=33):
-                    synced[name] = obj['msg']
-                    # print(f"{name}: {i}/{len(arr)}")
-                    break
-        if len(synced) == 3:
-            def remove(t1, t2):
-                return timedelta(milliseconds=500) < abs(t1 - t2)
-            # Remove old msgs
-            for name, arr in self.arrays.items():
-                for i, obj in enumerate(arr):
-                    if remove(obj['msg'].getTimestamp(), ts):
-                        arr.remove(obj)
-                    else:
-                        break
-            return synced
-        return False
-
-
-def setup_pipeline(config):
-    # Create pipeline
-    pipeline = dai.Pipeline()
-
-    # RGB camera
-    camera_color = pipeline.createColorCamera()
-    camera_color.setInterleaved(False)
-    camera_color.setColorOrder(dai.ColorCameraProperties.ColorOrder.RGB)
-    camera_color.setResolution(config["pipeline"]["color_cam"]["resolution"])
-    camera_color.setIspScale(config["pipeline"]["color_cam"]["isp_scale"])
-    camera_color.setPreviewSize(*INPUT_SHAPE)
-    camera_color.setBoardSocket(dai.CameraBoardSocket.RGB)
-
-    xout_color = pipeline.create(dai.node.XLinkOut)
-    xout_color.setStreamName("color")
-
-    # Depth neural network
-    depth_nn = pipeline.create(dai.node.NeuralNetwork)
-    depth_nn.setBlob(blob)
-    depth_nn.input.setBlocking(False)
-    depth_nn.setNumInferenceThreads(2)
-
-    xout_nn = pipeline.create(dai.node.XLinkOut)
-    xout_nn.setStreamName("nn")
-
-    # Mono cameras
-    mono_left = pipeline.createMonoCamera()
-    mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
-    mono_left.setResolution(config["pipeline"]["mono_cam"]["resolution"])
-
-    mono_right = pipeline.createMonoCamera()
-    mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-    mono_right.setResolution(config["pipeline"]["mono_cam"]["resolution"])
-
-    # Stereo depth
-    stereo = pipeline.create(dai.node.StereoDepth)
-    stereo.setDefaultProfilePreset(
-        dai.node.StereoDepth.PresetMode.HIGH_DENSITY
+    ret, frame = cv2.threshold(
+        src=frame,
+        thresh=thresh["thresh"],
+        maxval=255,
+        type=cv2.THRESH_BINARY
     )
-    stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
+    frame = cv2.cvtColor(
+        src=frame,
+        code=cv2.COLOR_RGB2GRAY
+    )
 
-    xout_disp = pipeline.create(dai.node.XLinkOut)
-    xout_disp.setStreamName("disparity")
+    # Find contours
+    contours, hierarchy = cv2.findContours(
+        image=frame,
+        mode=cv2.RETR_TREE,
+        method=cv2.CHAIN_APPROX_SIMPLE
+    )
 
-    # Spatial location calculator
-    spatial_loc_calc = pipeline.createSpatialLocationCalculator()
-    top_left = dai.Point2f(0.4, 0.4)
-    bottom_right = dai.Point2f(0.6, 0.6)
+    if len(contours) > 0:
+        cnt = contours[0]
+        x, y, w, h = cv2.boundingRect(cnt)
+        x2, y2 = x + w, y + h
+        return x, y, x2, y2
 
-    spatial_config = dai.SpatialLocationCalculatorConfigData()
-    spatial_config.depthThresholds.lowerThreshold = 100
-    spatial_config.depthThresholds.upperThreshold = 10000
-    calc_algo = dai.SpatialLocationCalculatorAlgorithm.MEDIAN
-    spatial_config.roi = dai.Rect(top_left, bottom_right)
+    return None
 
-    spatial_loc_calc.inputConfig.setWaitForMessage(False)
-    spatial_loc_calc.initialConfig.addROI(spatial_config)
 
-    xout_depth = pipeline.createXLinkOut()
-    xout_depth.setStreamName("depth")
-
-    xout_spatial_data = pipeline.createXLinkOut()
-    xout_spatial_data.setStreamName("spatialData")
-
-    xin_spatial_calc_config = pipeline.createXLinkIn()
-    xin_spatial_calc_config.setStreamName("spatialCalcConfig")
-
-    # Linking
-    camera_color.preview.link(depth_nn.input)
-    camera_color.isp.link(xout_color.input)
-
-    depth_nn.out.link(xout_nn.input)
-
-    mono_left.out.link(stereo.left)
-    mono_right.out.link(stereo.right)
-
-    stereo.disparity.link(xout_disp.input)
-
-    spatial_loc_calc.passthroughDepth.link(xout_depth.input)
-    stereo.depth.link(spatial_loc_calc.inputDepth)
-
-    spatial_loc_calc.out.link(xout_spatial_data.input)
-    xin_spatial_calc_config.out.link(spatial_loc_calc.inputConfig)
-
-    # Return nodes
-    nodes: dict = {
-        "camera_color": camera_color,
-        "xout_color": xout_color,
-        "depth_nn": depth_nn,
-        "xout_nn": xout_nn,
-        "mono_left": mono_left,
-        "mono_right": mono_right,
-        "stereo": stereo,
-        "xout_disp": xout_disp,
-        "spatial_loc_calc": spatial_loc_calc,
-        "spatial_config": spatial_config,
-        "xout_depth": xout_depth,
-        "xout_spatial_data": xout_spatial_data,
-        "xin_spatial_calc_config": xin_spatial_calc_config
-    }
-
-    return pipeline, nodes
+def draw_box(frame: npt.NDArray, bbox: tuple, color=None):
+    x, y, x2, y2 = bbox
+    cv2.rectangle(
+        img=frame,
+        pt1=(x, y),
+        pt2=(x2, y2),
+        color=CONFIG["display"]["line_color"] if not color else color,
+        thickness=CONFIG["display"]["line_thickness"]
+    )
 
 
 if __name__ == "__main__":
-    pipeline, nodes = setup_pipeline(config)
-    stereo: dai.node.StereoDepth = nodes["stereo"]  # type: ignore
-    spatial_config: dai.SpatialLocationCalculatorConfigData = nodes["spatial_config"]
+    ##################
+    #### Pipeline ####
+    ##################
+    pipeline = dai.Pipeline()
+
+    # Create nodes
+    camera_color = pipeline.createColorCamera()
+    xout_color = pipeline.createXLinkOut()
+    mono_left = pipeline.createMonoCamera()
+    mono_right = pipeline.createMonoCamera()
+    stereo = pipeline.createStereoDepth()
+    spatial_calc = pipeline.createSpatialLocationCalculator()
+    xout_depth = pipeline.createXLinkOut()
+    xout_spatial_data = pipeline.createXLinkOut()
+    xin_spatial_calc_config = pipeline.createXLinkIn()
+
+    # Color camera config
+    camera_color.setBoardSocket(dai.CameraBoardSocket.RGB)
+    camera_color.setResolution(CONFIG["pipeline"]["color_cam"]["resolution"])
+    camera_color.setColorOrder(dai.ColorCameraProperties.ColorOrder.RGB)
+    camera_color.setIspScale(CONFIG["pipeline"]["color_cam"]["isp_scale"])
+    camera_color.setInterleaved(False)
+
+    xout_color.setStreamName("color")
+
+    # Mono camera config
+    mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
+    mono_left.setResolution(CONFIG["pipeline"]["mono_cam"]["resolution"])
+    mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+    mono_right.setResolution(CONFIG["pipeline"]["mono_cam"]["resolution"])
+
+    # Stereo depth
+    stereo.setDefaultProfilePreset(
+        dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+    stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
+    stereo.initialConfig.setConfidenceThreshold(255)
+    stereo.setLeftRightCheck(True)
+    stereo.setSubpixel(False)
+
+    # Spatial location calculator
+    spatial_config = dai.SpatialLocationCalculatorConfigData()
+    spatial_config.roi = dai.Rect(
+        CONFIG["pipeline"]["spatial_calc"]["roi"]["top_left"],
+        CONFIG["pipeline"]["spatial_calc"]["roi"]["bottom_right"])
+    spatial_config.depthThresholds.lowerThreshold = CONFIG["pipeline"][
+        "spatial_calc"]["depth_thresholds"]["lower_threshold"]
+    spatial_config.depthThresholds.upperThreshold = CONFIG["pipeline"][
+        "spatial_calc"]["depth_thresholds"]["upper_threshold"]
+    spatial_config.calculationAlgorithm = CONFIG["pipeline"]["spatial_calc"]["algo"]
+
+    spatial_calc.inputConfig.setWaitForMessage(False)
+    spatial_calc.initialConfig.addROI(spatial_config)
+
+    xout_depth.setStreamName("depth")
+    xout_spatial_data.setStreamName("spatial_data")
+    xin_spatial_calc_config.setStreamName("spatial_calc_config")
+
+    # Linking
+    camera_color.isp.link(xout_color.input)
+    mono_left.out.link(stereo.left)
+    mono_right.out.link(stereo.right)
+    stereo.depth.link(spatial_calc.inputDepth)
+
+    spatial_calc.passthroughDepth.link(xout_depth.input)
+    spatial_calc.out.link(xout_spatial_data.input)
+
+    xin_spatial_calc_config.out.link(spatial_calc.inputConfig)
 
     ###########################
     #### Device Connection ####
@@ -241,231 +199,172 @@ if __name__ == "__main__":
         device.startPipeline(pipeline)
 
         # Prioritize the latest input data
-        queue_color: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
+        q_color: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
             name="color",
             maxSize=1,
             blocking=False
         )
-
-        queue_disparity: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
-            name="disparity",
+        q_depth: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
+            name="depth",
             maxSize=1,
             blocking=False
         )
-
-        queue_nn: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
-            name="nn",
-            maxSize=1,
+        q_spatial_calc: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
+            name="spatial_data",
+            maxSize=4,
             blocking=False
         )
+        q_spatial_calc_config: dai.DataInputQueue = device.getInputQueue(  # type: ignore
+            name="spatial_calc_config"
+        )
 
-        topLeft = dai.Point2f(0.4, 0.4)
-        bottomRight = dai.Point2f(0.6, 0.6)
-
-        depthQueue = device.getOutputQueue(  # type: ignore
-            name="depth", maxSize=4, blocking=False)
-        spatialCalcQueue = device.getOutputQueue(  # type: ignore
-            name="spatialData", maxSize=4, blocking=False)
-        spatialCalcConfigInQueue = device.getInputQueue(  # type: ignore
-            "spatialCalcConfig")
-
-        color = (255, 255, 255)
+        xy_min = CONFIG["pipeline"]["spatial_calc"]["roi"]["top_left"]
+        xy_max = CONFIG["pipeline"]["spatial_calc"]["roi"]["bottom_right"]
 
         fps_handler = FPSHandler()
-        sync = HostSync()
 
-        raw_frame: npt.NDArray = np.zeros_like(
+        empty_frame: npt.NDArray = np.zeros_like(
             (image_size[0], image_size[1], 3),
             dtype=np.uint8
         )
 
-        frames = {}
-
-        frame_idx = 0
-        wait_frames = 30
-        num_frames = 300
-
+        frame_types = {
+            "color": empty_frame,
+            "out": empty_frame,
+            "depth_color": empty_frame,
+        }
         annotations = []
 
+        x, y, x2, y2 = 0, 0, 0, 0
+
         # Main host-side application loop
-        # for frame_idx in range(num_frames + wait_frames):
         while True:
-            newConfig = False
-            msgs = False
-            if queue_color.has():
-                msgs = msgs or sync.add_msg("color", queue_color.get())
-            if queue_disparity.has():
-                msgs = msgs or sync.add_msg("depth", queue_disparity.get())
-            if queue_nn.has():
-                msgs = msgs or sync.add_msg("nn", queue_nn.get())
+            fps_handler.update()
 
-            if msgs:
-                fps_handler.update()
+            in_color = q_color.get()
+            color_frame = in_color.getCvFrame()  # type: ignore
+            frame_types["color"] = color_frame
 
-                frame = msgs["color"].getCvFrame()
-                
-                inDepth = depthQueue.get()  # Blocking call, will wait until a new data has arrived
+            out_frame = color_frame.copy()
+            frame_types["out"] = out_frame
 
-                depthFrame = inDepth.getFrame()  # depthFrame values are in millimeters
+            bounding_box = extract_bounding_box(
+                color_frame,
+                {"H": H_thresh, "S": S_thresh, "V": V_thresh, "thresh": thresh}
+            )
 
-                depth_downscaled = depthFrame[::4]
+            if bounding_box is not None:
+                x, y, x2, y2 = bounding_box
+                xy_min = dai.Point2f(x / image_size[1], y / image_size[0])
+                xy_max = dai.Point2f(x2 / image_size[1], y2 / image_size[0])
+
+                spatial_config.roi = dai.Rect(xy_min, xy_max)
+                cfg = dai.SpatialLocationCalculatorConfig()
+                cfg.addROI(spatial_config)
+                q_spatial_calc_config.send(cfg)
+
+                in_depth = q_depth.get()
+                depth_frame = in_depth.getFrame()  # type: ignore
+                frame_types["depth"] = depth_frame
+
+                in_spatial_data = q_spatial_calc.get()
+                spatial_data = in_spatial_data.getSpatialLocations()  # type: ignore
+
+                depth_downscaled = depth_frame[::4]
                 min_depth = np.percentile(
-                    depth_downscaled[depth_downscaled != 0], 1)
-                max_depth = np.percentile(depth_downscaled, 99)
-                depthFrameColor = np.interp(
-                    depthFrame, (min_depth, max_depth), (0, 255)).astype(np.uint8)
-                depthFrameColor = cv2.applyColorMap(
-                    depthFrameColor, cv2.COLORMAP_HOT)
+                    depth_downscaled[depth_downscaled != 0],
+                    1
+                )
+                max_depth = np.percentile(
+                    depth_downscaled,
+                    99
+                )
+                depth_color_frame = np.interp(
+                    x=depth_frame,
+                    xp=(min_depth, max_depth),
+                    fp=(0, 255)
+                ).astype(np.uint8)
+                depth_color_frame = cv2.applyColorMap(
+                    depth_color_frame, cv2.COLORMAP_HOT)
+                frame_types["depth_color"] = depth_color_frame
 
-                spatialData = spatialCalcQueue.get().getSpatialLocations()
-                for depthData in spatialData:
-                    roi = depthData.config.roi
+                for depth_data in spatial_data:
+                    roi = depth_data.config.roi
                     roi = roi.denormalize(
-                        width=depthFrameColor.shape[1], height=depthFrameColor.shape[0])
+                        width=depth_color_frame.shape[1],
+                        height=depth_color_frame.shape[0]
+                    )
                     xmin = int(roi.topLeft().x)
                     ymin = int(roi.topLeft().y)
                     xmax = int(roi.bottomRight().x)
                     ymax = int(roi.bottomRight().y)
 
-                    depthMin = depthData.depthMin
-                    depthMax = depthData.depthMax
+                    depth_min = depth_data.depthMin
+                    depth_max = depth_data.depthMax
 
-                    cv2.rectangle(frame, (xmin, ymin),
-                                (xmax, ymax), color, 1)
-                    cv2.putText(frame, f"X: {int(depthData.spatialCoordinates.x)} mm", (
-                        xmin + 10, ymin + 20), config["display"]["font"], 0.5, color)
-                    cv2.putText(frame, f"Y: {int(depthData.spatialCoordinates.y)} mm", (
-                        xmin + 10, ymin + 35), config["display"]["font"], 0.5, color)
-                    cv2.putText(frame, f"Z: {int(depthData.spatialCoordinates.z)} mm", (
-                        xmin + 10, ymin + 50), config["display"]["font"], 0.5, color)
+                    draw_box(out_frame, (xmin, ymin, xmax, ymax))
+                    cv2.putText(
+                        img=out_frame,
+                        text=f"X: {int(depth_data.spatialCoordinates.x)} mm",
+                        org=(xmax + 10, ymin + 20),
+                        fontFace=CONFIG["display"]["font"],
+                        fontScale=0.5,
+                        color=CONFIG["display"]["line_color"],
+                        lineType=CONFIG["display"]["line_type"]
+                    )
+                    cv2.putText(
+                        img=out_frame,
+                        text=f"Y: {int(depth_data.spatialCoordinates.y)} mm",
+                        org=(xmax + 10, ymin + 35),
+                        fontFace=CONFIG["display"]["font"],
+                        fontScale=0.5,
+                        color=CONFIG["display"]["line_color"],
+                        lineType=CONFIG["display"]["line_type"]
+                    )
+                    cv2.putText(
+                        img=out_frame,
+                        text=f"Z: {int(depth_data.spatialCoordinates.z)} mm",
+                        org=(xmax + 10, ymin + 50),
+                        fontFace=CONFIG["display"]["font"],
+                        fontScale=0.5,
+                        color=CONFIG["display"]["line_color"],
+                        lineType=CONFIG["display"]["line_type"]
+                    )
 
-                    frames["depth_frame_color"] = depthFrameColor
-
-                frames["raw_frame"] = frame
-                frames["out_frame"] = frame.copy()
-
-                hsv_frame = cv2.cvtColor(
-                    frames["raw_frame"], cv2.COLOR_BGR2HSV)
-                frames["hsv_frame"] = hsv_frame
-
-                # right mask H
-                red_lower = np.array([0, S_thresh[0], V_thresh[0]])
-                red_upper = np.array([H_thresh, S_thresh[1], V_thresh[1]])
-                mask_right = cv2.inRange(hsv_frame, red_lower, red_upper)
-
-                # left mask H
-                red_lower = np.array(
-                    [180 - H_thresh, S_thresh[0], V_thresh[0]])
-                red_upper = np.array([180, S_thresh[1], V_thresh[1]])
-                mask_left = cv2.inRange(hsv_frame, red_lower, red_upper)
-
-                mask = mask_right + mask_left  # type: ignore
-                frames["mask"] = mask
-
-                # Set output frame to zero everywhere except the mask
-                output_rgb = frames["raw_frame"].copy()
-                output_rgb[np.where(mask == 0)] = 0
-
-                # Post processing
-                proc_frame = output_rgb
-                proc_frame = cv2.blur(
-                    src=proc_frame,
-                    ksize=blur_size
-                )
-                ret, proc_frame = cv2.threshold(
-                    src=proc_frame,
-                    thresh=thresh,
-                    maxval=255,
-                    type=cv2.THRESH_BINARY
-                )
-                proc_frame = cv2.cvtColor(
-                    src=proc_frame,
-                    code=cv2.COLOR_RGB2GRAY
-                )
-                frames["proc_frame"] = proc_frame
-
-                # Find contours
-                contours, hierarchy = cv2.findContours(
-                    image=proc_frame,
-                    mode=cv2.RETR_TREE,
-                    method=cv2.CHAIN_APPROX_SIMPLE
-                )
-
-                x, y, x2, y2 = 0, 0, 0, 0
-                if len(contours) > 0:
-                    cnt = contours[0]
-                    x, y, w, h = cv2.boundingRect(cnt)
-                    x2, y2 = x + w, y + h
-                    newConfig = True
-                    topLeft = dai.Point2f(x, y)
-                    bottomRight = dai.Point2f(x2, y2)
-
-                    # frames["out_frame"] = cv2.rectangle(
-                    #     img=frames["out_frame"],
-                    #     pt1=(x, y),
-                    #     pt2=(x+w, y+h),
-                    #     color=config["display"]["line_color"],
-                    #     thickness=2,
-                    #     lineType=config["display"]["line_type"]
-                    # )
-                    # frames["out_frame"] = cv2.putText(
-                    #     img=frames["out_frame"],
-                    #     text=f"X: {x}, Y: {y}",
-                    #     org=(x, y-10),
-                    #     fontFace=config["display"]["font"],
-                    #     fontScale=1,
-                    #     color=config["display"]["line_color"],
-                    #     thickness=1,
-                    #     lineType=config["display"]["line_type"]
-                    # )
-
+                draw_box(out_frame, (x, y, x2, y2), (0, 255, 255))
                 cv2.putText(
-                    img=frames["out_frame"],
-                    text=f"FPS: {int(fps_handler.average())}",
-                    org=(5, 30),
-                    fontFace=config["display"]["font"],
-                    fontScale=1,
-                    color=config["display"]["line_color"],
-                    thickness=1,
-                    lineType=config["display"]["line_type"]
+                    img=out_frame,
+                    text=f"X: {x}, Y: {y}",
+                    org=(x, y - 10),
+                    fontFace=CONFIG["display"]["font"],
+                    fontScale=0.5,
+                    color=(0, 255, 255),
+                    lineType=CONFIG["display"]["line_type"]
                 )
 
-                frames["proc_frame"] = np.tile(
-                    np.expand_dims(frames["proc_frame"], axis=2),
-                    (1, 1, 3)
-                )
-                ff1 = np.concatenate(
-                    (frames["out_frame"], frames["raw_frame"]),
-                    axis=0
-                )
-                ff2 = np.concatenate(
-                    (frames["proc_frame"], frames["hsv_frame"]),
-                    axis=0
-                )
-                final_frame = np.concatenate(
-                    (ff1, ff2),
-                    axis=1
-                )
-                # cv2.imshow("Custom Object Tracker", final_frame)
-                cv2.imshow("Custom Object Tracker", frames["out_frame"])
-                # cv2.imshow("Custom Object Tracker",
-                #            frames["depth_frame_color"])
+            cv2.putText(
+                img=out_frame,
+                text=f"FPS: {int(fps_handler.average())}",
+                org=(5, 30),
+                fontFace=CONFIG["display"]["font"],
+                fontScale=0.5,
+                color=CONFIG["display"]["line_color"],
+                lineType=CONFIG["display"]["line_type"]
+            )
 
-                if frame_idx >= wait_frames:
-                    annotations.append(
-                        [f"{frame_idx - wait_frames:04}.jpg", image_size[1], image_size[0], "orb", x, y, x2, y2])
-                    # cv2.imwrite(
-                    #     f"./datasets/dataset_05/{frame_idx - wait_frames:04}.jpg",
-                    #     raw_frame
-                    # )
+            # cv2.imshow("Custom Object Tracker", out_frame)
+            cv2.imshow("Custom Object Tracker", np.concatenate(
+                (frame_types["depth_color"], frame_types["out"]),
+                axis=0)
+            )
 
-            if newConfig:
-                spatial_config.roi = dai.Rect(topLeft, bottomRight)
-                spatial_config.calculationAlgorithm = dai.SpatialLocationCalculatorAlgorithm.MEAN
-                cfg = dai.SpatialLocationCalculatorConfig()
-                cfg.addROI(spatial_config)
-                spatialCalcConfigInQueue.send(cfg)
-                newConfig = False
+            # if frame_idx >= wait_frames:
+            # annotations.append(
+            #     [f"{frame_idx - wait_frames:04}.jpg", image_size[1], image_size[0], "orb", x, y, x2, y2])
+            # cv2.imwrite(
+            #     f"./datasets/dataset_05/{frame_idx - wait_frames:04}.jpg",
+            #     raw_frame
+            # )
 
             if cv2.waitKey(1) == ord('q'):
                 break
