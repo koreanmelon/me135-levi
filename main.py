@@ -45,29 +45,32 @@ CONFIG = {
             },
             "algo": dai.SpatialLocationCalculatorAlgorithm.MEDIAN
         }
+    },
+    "proc": {
+        "image_size": (720, 1280),
+        "blur_size": (15, 15),
+        "H_thresh": 10,
+        "S_thresh": (250, 255),
+        "V_thresh": (0, 255),
+        "thresh": 25
     }
 }
 
-image_size = (720, 1280)  # (height, width)
-X_shape = (3, *image_size)
-blur_size = (15, 15)
 
-H_thresh = 10
-S_thresh = (250, 255)
-V_thresh = (0, 255)
-thresh = 25
-
-
-def extract_bounding_box(color_frame: npt.NDArray, thresh: dict):
+def extract_bounding_box(color_frame: npt.NDArray, bb_config: dict):
     frame = color_frame.copy()
     hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    red_lower = np.array([0, S_thresh[0], V_thresh[0]])
-    red_upper = np.array([H_thresh, S_thresh[1], V_thresh[1]])
+    red_lower = np.array(
+        [0, bb_config["S"][0], bb_config["V"][0]])
+    red_upper = np.array(
+        [bb_config["H"], bb_config["S"][1], bb_config["V"][1]])
     mask_right = cv2.inRange(hsv_frame, red_lower, red_upper)
 
-    red_lower = np.array([180 - H_thresh, S_thresh[0], V_thresh[0]])
-    red_upper = np.array([180, S_thresh[1], V_thresh[1]])
+    red_lower = np.array(
+        [180 - bb_config["H"], bb_config["S"][0], bb_config["V"][0]])
+    red_upper = np.array(
+        [180, bb_config["S"][1], bb_config["V"][1]])
     mask_left = cv2.inRange(hsv_frame, red_lower, red_upper)
 
     mask = mask_right + mask_left  # type: ignore
@@ -76,11 +79,11 @@ def extract_bounding_box(color_frame: npt.NDArray, thresh: dict):
     # Post processing
     frame = cv2.blur(
         src=frame,
-        ksize=blur_size
+        ksize=bb_config["blur_size"]
     )
     ret, frame = cv2.threshold(
         src=frame,
-        thresh=thresh["thresh"],
+        thresh=bb_config["thresh"],
         maxval=255,
         type=cv2.THRESH_BINARY
     )
@@ -107,7 +110,7 @@ def extract_bounding_box(color_frame: npt.NDArray, thresh: dict):
 
 def draw_box(frame: npt.NDArray, bbox: tuple, color=None):
     x, y, x2, y2 = bbox
-    cv2.rectangle(
+    return cv2.rectangle(
         img=frame,
         pt1=(x, y),
         pt2=(x2, y2),
@@ -154,7 +157,7 @@ if __name__ == "__main__":
     stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
     stereo.initialConfig.setConfidenceThreshold(255)
     stereo.setLeftRightCheck(True)
-    stereo.setSubpixel(False)
+    stereo.setExtendedDisparity(True)
 
     # Spatial location calculator
     spatial_config = dai.SpatialLocationCalculatorConfigData()
@@ -224,116 +227,123 @@ if __name__ == "__main__":
         fps_handler = FPSHandler()
 
         empty_frame: npt.NDArray = np.zeros_like(
-            (image_size[0], image_size[1], 3),
+            (CONFIG["proc"]["image_size"][0],
+             CONFIG["proc"]["image_size"][1], 3),
             dtype=np.uint8
         )
-
         frame_types = {
             "color": empty_frame,
             "out": empty_frame,
-            "depth_color": empty_frame,
+            "depth": empty_frame,
+            "depth_color": empty_frame
         }
         annotations = []
 
         x, y, x2, y2 = 0, 0, 0, 0
-
         # Main host-side application loop
         while True:
             fps_handler.update()
 
             in_color = q_color.get()
-            color_frame = in_color.getCvFrame()  # type: ignore
-            frame_types["color"] = color_frame
-
-            out_frame = color_frame.copy()
-            frame_types["out"] = out_frame
+            frame_types["color"] = in_color.getCvFrame()  # type: ignore
+            frame_types["out"] = frame_types["color"].copy()
 
             bounding_box = extract_bounding_box(
-                color_frame,
-                {"H": H_thresh, "S": S_thresh, "V": V_thresh, "thresh": thresh}
+                frame_types["color"],
+                bb_config={
+                    "H": CONFIG["proc"]["H_thresh"],
+                    "S": CONFIG["proc"]["S_thresh"],
+                    "V": CONFIG["proc"]["V_thresh"],
+                    "thresh": CONFIG["proc"]["thresh"],
+                    "blur_size": CONFIG["proc"]["blur_size"],
+                }
             )
 
             if bounding_box is not None:
                 x, y, x2, y2 = bounding_box
-                xy_min = dai.Point2f(x / image_size[1], y / image_size[0])
-                xy_max = dai.Point2f(x2 / image_size[1], y2 / image_size[0])
+                xy_min = dai.Point2f(
+                    x / CONFIG["proc"]["image_size"][1],
+                    y / CONFIG["proc"]["image_size"][0]
+                )
+                xy_max = dai.Point2f(
+                    x2 / CONFIG["proc"]["image_size"][1],
+                    y2 / CONFIG["proc"]["image_size"][0]
+                )
 
                 spatial_config.roi = dai.Rect(xy_min, xy_max)
                 cfg = dai.SpatialLocationCalculatorConfig()
                 cfg.addROI(spatial_config)
                 q_spatial_calc_config.send(cfg)
 
-                in_depth = q_depth.get()
-                depth_frame = in_depth.getFrame()  # type: ignore
-                frame_types["depth"] = depth_frame
+            in_depth = q_depth.get()
+            frame_types["depth"] = in_depth.getFrame()  # type: ignore
 
-                in_spatial_data = q_spatial_calc.get()
-                spatial_data = in_spatial_data.getSpatialLocations()  # type: ignore
+            in_spatial_data = q_spatial_calc.get()
+            spatial_data = in_spatial_data.getSpatialLocations()  # type: ignore
 
-                depth_downscaled = depth_frame[::4]
-                min_depth = np.percentile(
-                    depth_downscaled[depth_downscaled != 0],
-                    1
+            depth_downscaled = frame_types["depth"][::4]
+            min_depth = np.percentile(
+                depth_downscaled[depth_downscaled != 0],
+                1
+            )
+            max_depth = np.percentile(
+                depth_downscaled,
+                99
+            )
+            frame_types["depth_color"] = np.interp(
+                x=frame_types["depth"],
+                xp=(min_depth, max_depth),
+                fp=(0, 255)
+            ).astype(np.uint8)
+            frame_types["depth_color"] = cv2.applyColorMap(
+                frame_types["depth_color"], cv2.COLORMAP_HOT)
+
+            for depth_data in spatial_data:
+                roi = depth_data.config.roi
+                roi = roi.denormalize(
+                    width=frame_types["depth_color"].shape[1],
+                    height=frame_types["depth_color"].shape[0]
                 )
-                max_depth = np.percentile(
-                    depth_downscaled,
-                    99
-                )
-                depth_color_frame = np.interp(
-                    x=depth_frame,
-                    xp=(min_depth, max_depth),
-                    fp=(0, 255)
-                ).astype(np.uint8)
-                depth_color_frame = cv2.applyColorMap(
-                    depth_color_frame, cv2.COLORMAP_HOT)
-                frame_types["depth_color"] = depth_color_frame
+                xmin = int(roi.topLeft().x)
+                ymin = int(roi.topLeft().y)
+                xmax = int(roi.bottomRight().x)
+                ymax = int(roi.bottomRight().y)
 
-                for depth_data in spatial_data:
-                    roi = depth_data.config.roi
-                    roi = roi.denormalize(
-                        width=depth_color_frame.shape[1],
-                        height=depth_color_frame.shape[0]
-                    )
-                    xmin = int(roi.topLeft().x)
-                    ymin = int(roi.topLeft().y)
-                    xmax = int(roi.bottomRight().x)
-                    ymax = int(roi.bottomRight().y)
+                depth_min = depth_data.depthMin
+                depth_max = depth_data.depthMax
 
-                    depth_min = depth_data.depthMin
-                    depth_max = depth_data.depthMax
-
-                    draw_box(out_frame, (xmin, ymin, xmax, ymax))
-                    cv2.putText(
-                        img=out_frame,
-                        text=f"X: {int(depth_data.spatialCoordinates.x)} mm",
-                        org=(xmax + 10, ymin + 20),
-                        fontFace=CONFIG["display"]["font"],
-                        fontScale=0.5,
-                        color=CONFIG["display"]["line_color"],
-                        lineType=CONFIG["display"]["line_type"]
-                    )
-                    cv2.putText(
-                        img=out_frame,
-                        text=f"Y: {int(depth_data.spatialCoordinates.y)} mm",
-                        org=(xmax + 10, ymin + 35),
-                        fontFace=CONFIG["display"]["font"],
-                        fontScale=0.5,
-                        color=CONFIG["display"]["line_color"],
-                        lineType=CONFIG["display"]["line_type"]
-                    )
-                    cv2.putText(
-                        img=out_frame,
-                        text=f"Z: {int(depth_data.spatialCoordinates.z)} mm",
-                        org=(xmax + 10, ymin + 50),
-                        fontFace=CONFIG["display"]["font"],
-                        fontScale=0.5,
-                        color=CONFIG["display"]["line_color"],
-                        lineType=CONFIG["display"]["line_type"]
-                    )
-
-                draw_box(out_frame, (x, y, x2, y2), (0, 255, 255))
+                draw_box(frame_types["out"], (xmin, ymin, xmax, ymax))
                 cv2.putText(
-                    img=out_frame,
+                    img=frame_types["out"],
+                    text=f"X: {int(depth_data.spatialCoordinates.x)} mm",
+                    org=(xmax + 10, ymin + 20),
+                    fontFace=CONFIG["display"]["font"],
+                    fontScale=0.5,
+                    color=CONFIG["display"]["line_color"],
+                    lineType=CONFIG["display"]["line_type"]
+                )
+                cv2.putText(
+                    img=frame_types["out"],
+                    text=f"Y: {int(depth_data.spatialCoordinates.y)} mm",
+                    org=(xmax + 10, ymin + 35),
+                    fontFace=CONFIG["display"]["font"],
+                    fontScale=0.5,
+                    color=CONFIG["display"]["line_color"],
+                    lineType=CONFIG["display"]["line_type"]
+                )
+                cv2.putText(
+                    img=frame_types["out"],
+                    text=f"Z: {int(depth_data.spatialCoordinates.z)} mm",
+                    org=(xmax + 10, ymin + 50),
+                    fontFace=CONFIG["display"]["font"],
+                    fontScale=0.5,
+                    color=CONFIG["display"]["line_color"],
+                    lineType=CONFIG["display"]["line_type"]
+                )
+
+                draw_box(frame_types["out"], (x, y, x2, y2), (0, 255, 255))
+                cv2.putText(
+                    img=frame_types["out"],
                     text=f"X: {x}, Y: {y}",
                     org=(x, y - 10),
                     fontFace=CONFIG["display"]["font"],
@@ -343,7 +353,7 @@ if __name__ == "__main__":
                 )
 
             cv2.putText(
-                img=out_frame,
+                img=frame_types["out"],
                 text=f"FPS: {int(fps_handler.average())}",
                 org=(5, 30),
                 fontFace=CONFIG["display"]["font"],
