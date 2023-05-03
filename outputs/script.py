@@ -630,7 +630,7 @@ if __name__ == "__main__":
                 pickle.dump(car_xyz_data, f)
 
             with open("data_ins.pkl", "wb") as f:
-                pickle.dump(" ".join(instructions), f)
+                pickle.dump(instructions, f)
 
             # Draw output frame
             fps_handler.update()
