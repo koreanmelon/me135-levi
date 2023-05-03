@@ -1,5 +1,4 @@
-import threading
-from time import sleep
+import pickle
 
 import cv2
 import depthai as dai
@@ -8,30 +7,6 @@ import numpy.typing as npt
 
 from src.fps_handler import FPSHandler
 from src.utils import cv2_put_xyz, draw_box, extract_bounding_box
-
-finished = False
-
-
-def recv(device: dai.Device):
-    print("Started recv thread...")
-    print(device.getDeviceName())
-    print(device.getOutputQueueNames())
-    q: dai.DataOutputQueue = device.getOutputQueue(
-        name="control",
-        maxSize=10,
-        blocking=True
-    )
-    print(
-        f"Queue Properties: {q.getName()}, {q.getMaxSize()}, {q.getBlocking()}")
-
-    while not finished:
-        in_data = q.tryGet()
-        if in_data is not None:
-            with open("orb.txt", "a") as f:
-                instruction = ''.join([chr(i)
-                                      for i in in_data.getData()]) + '\n'
-                f.write(instruction)
-
 
 ################
 #### Config ####
@@ -80,6 +55,7 @@ CONFIG = {
     }
 }
 offset = np.array([130, 100, 50])
+lateral_step = 2
 
 
 if __name__ == "__main__":
@@ -98,14 +74,6 @@ if __name__ == "__main__":
     xout_depth = pipeline.createXLinkOut()
     xout_spatial_data = pipeline.createXLinkOut()
     xin_spatial_calc_config = pipeline.createXLinkIn()
-
-    xin_xyz_orb = pipeline.createXLinkIn()
-    xin_xyz_car = pipeline.createXLinkIn()
-    xout_xyz_orb = pipeline.createXLinkOut()
-    xout_xyz_car = pipeline.createXLinkOut()
-
-    xin_control = pipeline.createXLinkIn()
-    xout_control = pipeline.createXLinkOut()
 
     # Color camera config
     camera_color.setBoardSocket(dai.CameraBoardSocket.RGB)
@@ -161,14 +129,6 @@ if __name__ == "__main__":
     xout_spatial_data.setStreamName("spatial_data")
     xin_spatial_calc_config.setStreamName("spatial_calc_config")
 
-    xin_xyz_orb.setStreamName("xyz_orb")
-    xin_xyz_car.setStreamName("xyz_car")
-    xout_xyz_orb.setStreamName("xyz_orb")
-    xout_xyz_car.setStreamName("xyz_car")
-
-    xin_control.setStreamName("control")
-    xout_control.setStreamName("control")
-
     # Linking
     camera_color.isp.link(xout_color.input)
     mono_left.out.link(stereo.left)
@@ -180,17 +140,10 @@ if __name__ == "__main__":
 
     xin_spatial_calc_config.out.link(spatial_calc.inputConfig)
 
-    xin_xyz_orb.out.link(xout_xyz_orb.input)
-    xin_xyz_car.out.link(xout_xyz_car.input)
-    xin_control.out.link(xout_control.input)
-
-    # print(pipeline.serializeToJson())
-
     ###########################
     #### Device Connection ####
     ###########################
-    with dai.Device() as device:
-        device.startPipeline(pipeline)
+    with dai.Device(pipeline) as device:
 
         # Prioritize the latest input data
         q_color: dai.DataOutputQueue = device.getOutputQueue(
@@ -210,21 +163,6 @@ if __name__ == "__main__":
         )
         q_spatial_calc_config: dai.DataInputQueue = device.getInputQueue(
             name="spatial_calc_config"
-        )
-        q_xin_xyz_orb: dai.DataInputQueue = device.getInputQueue(
-            name="xyz_orb",
-            maxSize=10,
-            blocking=False
-        )
-        q_xin_xyz_car: dai.DataInputQueue = device.getInputQueue(
-            name="xyz_car",
-            maxSize=10,
-            blocking=False
-        )
-        q_xin_control: dai.DataInputQueue = device.getInputQueue(
-            name="control",
-            maxSize=10,
-            blocking=False
         )
 
         fps_handler = FPSHandler()
@@ -247,8 +185,9 @@ if __name__ == "__main__":
         orb_x1, orb_y1, orb_x2, orb_y2 = 0, 0, 0, 0
         bounding_box_orb = (orb_x1, orb_y1, orb_x2, orb_y2)
 
-        # thread = threading.Thread(target=recv, args=(device,), daemon=True)
-        # thread.start()
+        queue_size = 30
+        orb_xyz_data = np.empty((queue_size, 3), dtype=np.float32)
+        car_xyz_data = np.empty((queue_size, 3), dtype=np.float32)
 
         #########################################
         #### Main host-side application loop ####
@@ -331,7 +270,7 @@ if __name__ == "__main__":
             spatial_data: list[dai.SpatialLocations] = in_spatial_data.getSpatialLocations(
             )
 
-            depth_downscaled = frames["depth"]
+            depth_downscaled = frames["depth"][::4, ::4]
             min_depth = np.percentile(
                 depth_downscaled[depth_downscaled != 0], 1)
             max_depth = np.percentile(depth_downscaled, 99)
@@ -373,65 +312,45 @@ if __name__ == "__main__":
                     CONFIG=CONFIG
                 )
 
-            vec = xyz_data[1] - xyz_data[0]
-            vec -= offset
+            orb_pos = xyz_data[0]
+            np.roll(orb_xyz_data, -1, axis=0)
+            orb_xyz_data[-1] = orb_pos
 
-            mov_thresh = 10
+            car_pos = xyz_data[1]
+            np.roll(car_xyz_data, -1, axis=0)
+            car_xyz_data[-1] = car_pos
 
-            instructions = []
-            if vec[0] > mov_thresh:
-                instructions.append("right")
-            elif vec[0] < -mov_thresh:
-                instructions.append("left")
+            dir_vec = car_pos - orb_pos
+            dir_vec -= offset
 
-            if vec[1] > mov_thresh:
-                instructions.append("up")
-            elif vec[1] < -mov_thresh:
-                instructions.append("down")
+            instr_vec = np.sign(dir_vec)
 
-            if vec[2] > mov_thresh:
-                instructions.append("forward")
-            elif vec[2] < -mov_thresh:
-                instructions.append("backward")
+            dir_mapping = np.array([
+                ["None", "right", "left"],
+                ["None", "up", "down"],
+                ["None", "forward", "backward"]
+            ])
 
-            instr_out: list[str] = []
-            for instruction in instructions:
-                if instruction == "right":
-                    instr_out.append("s1right")
-                    instr_out.append("s2left")
-                elif instruction == "left":
-                    instr_out.append("s1left")
-                    instr_out.append("s2right")
-                elif instruction == "up":
-                    instr_out.append("s1up")
-                    instr_out.append("s2down")
-                elif instruction == "down":
-                    instr_out.append("s1down")
-                    instr_out.append("s2up")
-                elif instruction == "forward":
-                    pass
-                elif instruction == "backward":
-                    pass
-                else:
-                    raise RuntimeError("Unknown instruction")
+            subdir_mapping = np.array([
+                ["None",
+                 lateral_step * "s1right s2left ",
+                 lateral_step * "s1left s2right "],
+                ["None",
+                 lateral_step * "s1up s2down ",
+                 lateral_step * "s1down s2up "],
+                ["None", "forward", "backward"]
+            ])
 
-            out_str = " ".join(instr_out)
+            instructions = [subdir_mapping[i][instr_vec[i]] for i in range(3)]
 
-            out_vec = [ord(c) for c in out_str]
+            with open("data_orb.pkl", "wb") as f:
+                pickle.dump(orb_xyz_data, f)
 
-            # Send xyz data to device (to be read from another thread)
-            buf_orb = dai.Buffer()
-            buf_orb.setData(xyz_data[0])
-            buf_car = dai.Buffer()
-            buf_car.setData(xyz_data[1])
+            with open("data_car.pkl", "wb") as f:
+                pickle.dump(car_xyz_data, f)
 
-            buf_control = dai.Buffer()
-            buf_control.setData(out_vec)
-
-            q_xin_xyz_orb.send(buf_orb)
-            q_xin_xyz_car.send(buf_car)
-
-            q_xin_control.send(buf_control)
+            with open("data_ins.pkl", "wb") as f:
+                pickle.dump("".join(instructions).strip(), f)
 
             # Draw output frame
             fps_handler.update()
@@ -440,6 +359,4 @@ if __name__ == "__main__":
             cv2.imshow("Custom Object Tracker", frames["out"])
 
             if cv2.waitKey(1) == ord('q'):
-                finished = True
-                # thread.join()
                 break
