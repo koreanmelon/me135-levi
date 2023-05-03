@@ -37,7 +37,7 @@ def pytorch_to_onnx(model: nn.Module, input_shape: tuple, simplify_onnx: bool = 
 
 
 def cv2_put_xyz(frame, xyz, anchor, CONFIG):
-    x, y, z = xyz
+    x, y, z = xyz[0], xyz[1], xyz[2]
     ax, ay = anchor
     cv2.putText(
         img=frame,
