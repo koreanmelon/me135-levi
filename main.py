@@ -179,7 +179,9 @@ if __name__ == "__main__":
         x, y, x2, y2 = 0, 0, 0, 0
         bounding_box = (x, y, x2, y2)
 
-        # Main host-side application loop
+        #########################################
+        #### Main host-side application loop ####
+        #########################################
         while True:
             fps_handler.update()
 
