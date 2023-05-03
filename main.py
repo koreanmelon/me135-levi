@@ -4,7 +4,7 @@ import numpy as np
 import numpy.typing as npt
 
 from src.fps_handler import FPSHandler
-from src.utils import draw_box, extract_bounding_box
+from src.utils import cv2_put_xyz, draw_box, extract_bounding_box
 
 ################
 #### Config ####
@@ -31,14 +31,14 @@ CONFIG = {
             "resolution": dai.MonoCameraProperties.SensorResolution.THE_480_P,
             "fps": 35
         },
-        "spatial_calc": {
+        "spatial": {
             "roi": {
-                "top_left": dai.Point2f(0.4, 0.4),
-                "bottom_right": dai.Point2f(0.6, 0.6)
+                "xy_min": dai.Point2f(0.4, 0.4),
+                "xy_max": dai.Point2f(0.6, 0.6)
             },
             "depth_thresholds": {
-                "lower_threshold": 100,
-                "upper_threshold": 10000
+                "lower": 100,
+                "upper": 10000
             },
             "algo": dai.SpatialLocationCalculatorAlgorithm.MEDIAN
         }
@@ -98,18 +98,27 @@ if __name__ == "__main__":
     stereo.setExtendedDisparity(True)
 
     # Spatial location calculator
-    spatial_config = dai.SpatialLocationCalculatorConfigData()
-    spatial_config.roi = dai.Rect(
-        CONFIG["pipeline"]["spatial_calc"]["roi"]["top_left"],
-        CONFIG["pipeline"]["spatial_calc"]["roi"]["bottom_right"])
-    spatial_config.depthThresholds.lowerThreshold = CONFIG["pipeline"][
-        "spatial_calc"]["depth_thresholds"]["lower_threshold"]
-    spatial_config.depthThresholds.upperThreshold = CONFIG["pipeline"][
-        "spatial_calc"]["depth_thresholds"]["upper_threshold"]
-    spatial_config.calculationAlgorithm = CONFIG["pipeline"]["spatial_calc"]["algo"]
+    spatial_cfg_orb = dai.SpatialLocationCalculatorConfigData()
+    spatial_cfg_orb.roi = dai.Rect(
+        CONFIG["pipeline"]["spatial"]["roi"]["xy_min"], CONFIG["pipeline"]["spatial"]["roi"]["xy_max"])
+    spatial_cfg_orb.depthThresholds.lowerThreshold = CONFIG["pipeline"][
+        "spatial"]["depth_thresholds"]["lower"]
+    spatial_cfg_orb.depthThresholds.upperThreshold = CONFIG["pipeline"][
+        "spatial"]["depth_thresholds"]["upper"]
+    spatial_cfg_orb.calculationAlgorithm = CONFIG["pipeline"]["spatial"]["algo"]
+
+    spatial_cfg_car = dai.SpatialLocationCalculatorConfigData()
+    spatial_cfg_car.roi = dai.Rect(
+        CONFIG["pipeline"]["spatial"]["roi"]["xy_min"], CONFIG["pipeline"]["spatial"]["roi"]["xy_max"])
+    spatial_cfg_car.depthThresholds.lowerThreshold = CONFIG["pipeline"][
+        "spatial"]["depth_thresholds"]["lower"]
+    spatial_cfg_car.depthThresholds.upperThreshold = CONFIG["pipeline"][
+        "spatial"]["depth_thresholds"]["upper"]
+    spatial_cfg_car.calculationAlgorithm = CONFIG["pipeline"]["spatial"]["algo"]
 
     spatial_calc.inputConfig.setWaitForMessage(False)
-    spatial_calc.initialConfig.addROI(spatial_config)
+    spatial_calc.initialConfig.addROI(spatial_cfg_orb)
+    spatial_calc.initialConfig.addROI(spatial_cfg_car)
 
     xout_depth.setStreamName("depth")
     xout_spatial_data.setStreamName("spatial_data")
@@ -152,15 +161,12 @@ if __name__ == "__main__":
         )
         q_spatial_calc: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
             name="spatial_data",
-            maxSize=4,
+            maxSize=1,
             blocking=False
         )
         q_spatial_calc_config: dai.DataInputQueue = device.getInputQueue(  # type: ignore
             name="spatial_calc_config"
         )
-
-        xy_min = CONFIG["pipeline"]["spatial_calc"]["roi"]["top_left"]
-        xy_max = CONFIG["pipeline"]["spatial_calc"]["roi"]["bottom_right"]
 
         fps_handler = FPSHandler()
 
@@ -176,15 +182,16 @@ if __name__ == "__main__":
             "depth_color": empty_frame
         }
 
-        x, y, x2, y2 = 0, 0, 0, 0
-        bounding_box = (x, y, x2, y2)
+        car_x1, car_y1, car_x2, car_y2 = 0, 0, 0, 0
+        bounding_box_car = (car_x1, car_y1, car_x2, car_y2)
+
+        orb_x1, orb_y1, orb_x2, orb_y2 = 0, 0, 0, 0
+        bounding_box_orb = (orb_x1, orb_y1, orb_x2, orb_y2)
 
         #########################################
         #### Main host-side application loop ####
         #########################################
         while True:
-            fps_handler.update()
-
             in_color = q_color.get()
             frames["color"] = in_color.getCvFrame()  # type: ignore
             frames["out"] = frames["color"].copy()
@@ -201,27 +208,51 @@ if __name__ == "__main__":
             )
 
             if bb is not None:
-                bounding_box = bb
-                x, y, x2, y2 = bounding_box
-                xy_min = dai.Point2f(
-                    x / CONFIG["proc"]["image_size"][1],
-                    y / CONFIG["proc"]["image_size"][0]
+                bounding_box_orb, bounding_box_car = bb
+
+                orb_x1, orb_y1, orb_x2, orb_y2 = bounding_box_orb
+                orb_xy_min = dai.Point2f(
+                    orb_x1 / CONFIG["proc"]["image_size"][1],
+                    orb_y1 / CONFIG["proc"]["image_size"][0]
                 )
-                xy_max = dai.Point2f(
-                    x2 / CONFIG["proc"]["image_size"][1],
-                    y2 / CONFIG["proc"]["image_size"][0]
+                orb_xy_max = dai.Point2f(
+                    orb_x2 / CONFIG["proc"]["image_size"][1],
+                    orb_y2 / CONFIG["proc"]["image_size"][0]
                 )
 
-                spatial_config.roi = dai.Rect(xy_min, xy_max)
+                car_x1, car_y1, car_x2, car_y2 = bounding_box_car
+                car_xy_min = dai.Point2f(
+                    car_x1 / CONFIG["proc"]["image_size"][1],
+                    car_y1 / CONFIG["proc"]["image_size"][0]
+                )
+                car_xy_max = dai.Point2f(
+                    car_x2 / CONFIG["proc"]["image_size"][1],
+                    car_y2 / CONFIG["proc"]["image_size"][0]
+                )
+
+                spatial_cfg_orb.roi = dai.Rect(orb_xy_min, orb_xy_max)
+                spatial_cfg_car.roi = dai.Rect(car_xy_min, car_xy_max)
                 cfg = dai.SpatialLocationCalculatorConfig()
-                cfg.addROI(spatial_config)
+                cfg.addROI(spatial_cfg_orb)
+                cfg.addROI(spatial_cfg_car)
                 q_spatial_calc_config.send(cfg)
 
-            draw_box(frames["out"], bounding_box, CONFIG, (0, 255, 255))
+            draw_box(frames["out"], bounding_box_orb, CONFIG, (0, 255, 255))
             cv2.putText(
                 img=frames["out"],
-                text=f"X: {x}, Y: {y}",
-                org=(x, y - 10),
+                text="ORB",
+                org=(orb_x1, orb_y1 - 10),
+                fontFace=CONFIG["display"]["font"],
+                fontScale=0.5,
+                color=(0, 255, 255),
+                lineType=CONFIG["display"]["line_type"]
+            )
+
+            draw_box(frames["out"], bounding_box_car, CONFIG, (0, 255, 255))
+            cv2.putText(
+                img=frames["out"],
+                text="CAR",
+                org=(car_x1, car_y1 - 10),
                 fontFace=CONFIG["display"]["font"],
                 fontScale=0.5,
                 color=(0, 255, 255),
@@ -261,34 +292,18 @@ if __name__ == "__main__":
                 depth_max = depth_data.depthMax
 
                 draw_box(frames["out"], (xmin, ymin, xmax, ymax), CONFIG)
-                cv2.putText(
-                    img=frames["out"],
-                    text=f"X: {int(depth_data.spatialCoordinates.x)} mm",
-                    org=(xmax + 10, ymin + 20),
-                    fontFace=CONFIG["display"]["font"],
-                    fontScale=0.5,
-                    color=CONFIG["display"]["line_color"],
-                    lineType=CONFIG["display"]["line_type"]
-                )
-                cv2.putText(
-                    img=frames["out"],
-                    text=f"Y: {int(depth_data.spatialCoordinates.y)} mm",
-                    org=(xmax + 10, ymin + 35),
-                    fontFace=CONFIG["display"]["font"],
-                    fontScale=0.5,
-                    color=CONFIG["display"]["line_color"],
-                    lineType=CONFIG["display"]["line_type"]
-                )
-                cv2.putText(
-                    img=frames["out"],
-                    text=f"Z: {int(depth_data.spatialCoordinates.z)} mm",
-                    org=(xmax + 10, ymin + 50),
-                    fontFace=CONFIG["display"]["font"],
-                    fontScale=0.5,
-                    color=CONFIG["display"]["line_color"],
-                    lineType=CONFIG["display"]["line_type"]
+                cv2_put_xyz(
+                    frame=frames["out"],
+                    xyz=(
+                        int(depth_data.spatialCoordinates.x),
+                        int(depth_data.spatialCoordinates.y),
+                        int(depth_data.spatialCoordinates.z)
+                    ),
+                    anchor=(xmax, ymin),
+                    CONFIG=CONFIG
                 )
 
+            fps_handler.update()
             fps_handler.draw(frames["out"], CONFIG)
 
             cv2.imshow("Custom Object Tracker", frames["out"])
