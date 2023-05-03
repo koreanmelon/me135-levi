@@ -1,3 +1,5 @@
+import cv2
+import numpy.typing as npt
 from time import time_ns
 
 import numpy as np
@@ -38,3 +40,19 @@ class FPSHandler:
             float: fps
         """
         return 1e9 / np.diff(self.timestamps).mean()
+
+    def draw(self, frame: npt.NDArray, CONFIG: dict):
+        """Draws FPS on frame.
+
+        Args:
+            frame (npt.NDArray): frame to draw FPS on
+        """
+        cv2.putText(
+            img=frame,
+            text=f"FPS: {int(self.average())}",
+            org=(5, 30),
+            fontFace=CONFIG["display"]["font"],
+            fontScale=0.5,
+            color=CONFIG["display"]["line_color"],
+            lineType=CONFIG["display"]["line_type"]
+        )

@@ -1,13 +1,10 @@
-from datetime import timedelta
-
-import blobconverter
 import cv2
 import depthai as dai
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
 
 from src.fps_handler import FPSHandler
+from src.utils import draw_box, extract_bounding_box
 
 ################
 #### Config ####
@@ -25,14 +22,14 @@ CONFIG = {
     "pipeline": {
         "color_cam": {
             "resolution": dai.ColorCameraProperties.SensorResolution.THE_1080_P,
-            "fps": 30,
+            "fps": 35,
             "isp_scale": (2, 3),
             "orientation": dai.CameraImageOrientation.VERTICAL_FLIP,
             "board_socket": dai.CameraBoardSocket.RGB
         },
         "mono_cam": {
             "resolution": dai.MonoCameraProperties.SensorResolution.THE_480_P,
-            "fps": 30
+            "fps": 35
         },
         "spatial_calc": {
             "roi": {
@@ -55,68 +52,6 @@ CONFIG = {
         "thresh": 25
     }
 }
-
-
-def extract_bounding_box(color_frame: npt.NDArray, bb_config: dict):
-    frame = color_frame.copy()
-    hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-    red_lower = np.array(
-        [0, bb_config["S"][0], bb_config["V"][0]])
-    red_upper = np.array(
-        [bb_config["H"], bb_config["S"][1], bb_config["V"][1]])
-    mask_right = cv2.inRange(hsv_frame, red_lower, red_upper)
-
-    red_lower = np.array(
-        [180 - bb_config["H"], bb_config["S"][0], bb_config["V"][0]])
-    red_upper = np.array(
-        [180, bb_config["S"][1], bb_config["V"][1]])
-    mask_left = cv2.inRange(hsv_frame, red_lower, red_upper)
-
-    mask = mask_right + mask_left  # type: ignore
-    frame[np.where(mask == 0)] = 0
-
-    # Post processing
-    frame = cv2.blur(
-        src=frame,
-        ksize=bb_config["blur_size"]
-    )
-    ret, frame = cv2.threshold(
-        src=frame,
-        thresh=bb_config["thresh"],
-        maxval=255,
-        type=cv2.THRESH_BINARY
-    )
-    frame = cv2.cvtColor(
-        src=frame,
-        code=cv2.COLOR_RGB2GRAY
-    )
-
-    # Find contours
-    contours, hierarchy = cv2.findContours(
-        image=frame,
-        mode=cv2.RETR_TREE,
-        method=cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    if len(contours) > 0:
-        cnt = contours[0]
-        x, y, w, h = cv2.boundingRect(cnt)
-        x2, y2 = x + w, y + h
-        return x, y, x2, y2
-
-    return None
-
-
-def draw_box(frame: npt.NDArray, bbox: tuple, color=None):
-    x, y, x2, y2 = bbox
-    return cv2.rectangle(
-        img=frame,
-        pt1=(x, y),
-        pt2=(x2, y2),
-        color=CONFIG["display"]["line_color"] if not color else color,
-        thickness=CONFIG["display"]["line_thickness"]
-    )
 
 
 if __name__ == "__main__":
@@ -142,14 +77,17 @@ if __name__ == "__main__":
     camera_color.setColorOrder(dai.ColorCameraProperties.ColorOrder.RGB)
     camera_color.setIspScale(CONFIG["pipeline"]["color_cam"]["isp_scale"])
     camera_color.setInterleaved(False)
+    camera_color.setFps(CONFIG["pipeline"]["color_cam"]["fps"])
 
     xout_color.setStreamName("color")
 
     # Mono camera config
     mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
     mono_left.setResolution(CONFIG["pipeline"]["mono_cam"]["resolution"])
+    mono_left.setFps(CONFIG["pipeline"]["mono_cam"]["fps"])
     mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
     mono_right.setResolution(CONFIG["pipeline"]["mono_cam"]["resolution"])
+    mono_right.setFps(CONFIG["pipeline"]["mono_cam"]["fps"])
 
     # Stereo depth
     stereo.setDefaultProfilePreset(
@@ -231,25 +169,26 @@ if __name__ == "__main__":
              CONFIG["proc"]["image_size"][1], 3),
             dtype=np.uint8
         )
-        frame_types = {
+        frames = {
             "color": empty_frame,
             "out": empty_frame,
             "depth": empty_frame,
             "depth_color": empty_frame
         }
-        annotations = []
 
         x, y, x2, y2 = 0, 0, 0, 0
+        bounding_box = (x, y, x2, y2)
+
         # Main host-side application loop
         while True:
             fps_handler.update()
 
             in_color = q_color.get()
-            frame_types["color"] = in_color.getCvFrame()  # type: ignore
-            frame_types["out"] = frame_types["color"].copy()
+            frames["color"] = in_color.getCvFrame()  # type: ignore
+            frames["out"] = frames["color"].copy()
 
-            bounding_box = extract_bounding_box(
-                frame_types["color"],
+            bb = extract_bounding_box(
+                frames["color"],
                 bb_config={
                     "H": CONFIG["proc"]["H_thresh"],
                     "S": CONFIG["proc"]["S_thresh"],
@@ -259,7 +198,8 @@ if __name__ == "__main__":
                 }
             )
 
-            if bounding_box is not None:
+            if bb is not None:
+                bounding_box = bb
                 x, y, x2, y2 = bounding_box
                 xy_min = dai.Point2f(
                     x / CONFIG["proc"]["image_size"][1],
@@ -275,34 +215,40 @@ if __name__ == "__main__":
                 cfg.addROI(spatial_config)
                 q_spatial_calc_config.send(cfg)
 
+            draw_box(frames["out"], bounding_box, CONFIG, (0, 255, 255))
+            cv2.putText(
+                img=frames["out"],
+                text=f"X: {x}, Y: {y}",
+                org=(x, y - 10),
+                fontFace=CONFIG["display"]["font"],
+                fontScale=0.5,
+                color=(0, 255, 255),
+                lineType=CONFIG["display"]["line_type"]
+            )
+
             in_depth = q_depth.get()
-            frame_types["depth"] = in_depth.getFrame()  # type: ignore
+            frames["depth"] = in_depth.getFrame()  # type: ignore
 
             in_spatial_data = q_spatial_calc.get()
             spatial_data = in_spatial_data.getSpatialLocations()  # type: ignore
 
-            depth_downscaled = frame_types["depth"][::4]
+            depth_downscaled = frames["depth"][::4]
             min_depth = np.percentile(
-                depth_downscaled[depth_downscaled != 0],
-                1
-            )
-            max_depth = np.percentile(
-                depth_downscaled,
-                99
-            )
-            frame_types["depth_color"] = np.interp(
-                x=frame_types["depth"],
+                depth_downscaled[depth_downscaled != 0], 1)
+            max_depth = np.percentile(depth_downscaled, 99)
+            frames["depth_color"] = np.interp(
+                x=frames["depth"],
                 xp=(min_depth, max_depth),
                 fp=(0, 255)
             ).astype(np.uint8)
-            frame_types["depth_color"] = cv2.applyColorMap(
-                frame_types["depth_color"], cv2.COLORMAP_HOT)
+            frames["depth_color"] = cv2.applyColorMap(
+                frames["depth_color"], cv2.COLORMAP_HOT)
 
             for depth_data in spatial_data:
                 roi = depth_data.config.roi
                 roi = roi.denormalize(
-                    width=frame_types["depth_color"].shape[1],
-                    height=frame_types["depth_color"].shape[0]
+                    width=frames["depth_color"].shape[1],
+                    height=frames["depth_color"].shape[0]
                 )
                 xmin = int(roi.topLeft().x)
                 ymin = int(roi.topLeft().y)
@@ -312,9 +258,9 @@ if __name__ == "__main__":
                 depth_min = depth_data.depthMin
                 depth_max = depth_data.depthMax
 
-                draw_box(frame_types["out"], (xmin, ymin, xmax, ymax))
+                draw_box(frames["out"], (xmin, ymin, xmax, ymax), CONFIG)
                 cv2.putText(
-                    img=frame_types["out"],
+                    img=frames["out"],
                     text=f"X: {int(depth_data.spatialCoordinates.x)} mm",
                     org=(xmax + 10, ymin + 20),
                     fontFace=CONFIG["display"]["font"],
@@ -323,7 +269,7 @@ if __name__ == "__main__":
                     lineType=CONFIG["display"]["line_type"]
                 )
                 cv2.putText(
-                    img=frame_types["out"],
+                    img=frames["out"],
                     text=f"Y: {int(depth_data.spatialCoordinates.y)} mm",
                     org=(xmax + 10, ymin + 35),
                     fontFace=CONFIG["display"]["font"],
@@ -332,7 +278,7 @@ if __name__ == "__main__":
                     lineType=CONFIG["display"]["line_type"]
                 )
                 cv2.putText(
-                    img=frame_types["out"],
+                    img=frames["out"],
                     text=f"Z: {int(depth_data.spatialCoordinates.z)} mm",
                     org=(xmax + 10, ymin + 50),
                     fontFace=CONFIG["display"]["font"],
@@ -341,45 +287,9 @@ if __name__ == "__main__":
                     lineType=CONFIG["display"]["line_type"]
                 )
 
-                draw_box(frame_types["out"], (x, y, x2, y2), (0, 255, 255))
-                cv2.putText(
-                    img=frame_types["out"],
-                    text=f"X: {x}, Y: {y}",
-                    org=(x, y - 10),
-                    fontFace=CONFIG["display"]["font"],
-                    fontScale=0.5,
-                    color=(0, 255, 255),
-                    lineType=CONFIG["display"]["line_type"]
-                )
+            fps_handler.draw(frames["out"], CONFIG)
 
-            cv2.putText(
-                img=frame_types["out"],
-                text=f"FPS: {int(fps_handler.average())}",
-                org=(5, 30),
-                fontFace=CONFIG["display"]["font"],
-                fontScale=0.5,
-                color=CONFIG["display"]["line_color"],
-                lineType=CONFIG["display"]["line_type"]
-            )
-
-            # cv2.imshow("Custom Object Tracker", out_frame)
-            cv2.imshow("Custom Object Tracker", np.concatenate(
-                (frame_types["depth_color"], frame_types["out"]),
-                axis=0)
-            )
-
-            # if frame_idx >= wait_frames:
-            # annotations.append(
-            #     [f"{frame_idx - wait_frames:04}.jpg", image_size[1], image_size[0], "orb", x, y, x2, y2])
-            # cv2.imwrite(
-            #     f"./datasets/dataset_05/{frame_idx - wait_frames:04}.jpg",
-            #     raw_frame
-            # )
+            cv2.imshow("Custom Object Tracker", frames["out"])
 
             if cv2.waitKey(1) == ord('q'):
                 break
-
-        # df = pd.DataFrame(
-        #     annotations,
-        #     columns=["filename", "width", "height", "class", "xmin", "ymin", "xmax", "ymax"])
-        # df.to_csv("./datasets/dataset_05.csv", index=False)
