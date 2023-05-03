@@ -1,122 +1,70 @@
-arrow @ file:///home/conda/feedstock_root/build_artifacts/arrow_1662382474514/work
-asttokens @ file:///opt/conda/conda-bld/asttokens_1646925590279/work
-attrs @ file:///home/conda/feedstock_root/build_artifacts/attrs_1671632566681/work
-backcall @ file:///home/ktietz/src/ci/backcall_1611930011877/work
-blinker @ file:///home/conda/feedstock_root/build_artifacts/blinker_1681349778161/work
+asttokens==2.2.1
+backcall==0.2.0
 blobconverter==1.3.0
-boto3 @ file:///home/conda/feedstock_root/build_artifacts/boto3_1682782758957/work
-botocore @ file:///home/conda/feedstock_root/build_artifacts/botocore_1682762213240/work
-Bottleneck @ file:///C:/ci_311/bottleneck_1676500016583/work
-bravado @ file:///home/conda/feedstock_root/build_artifacts/bravado_1614723672758/work
-bravado-core @ file:///home/conda/feedstock_root/build_artifacts/bravado-core_1662640043835/work
-brotlipy==0.7.0
-cached-property @ file:///home/conda/feedstock_root/build_artifacts/cached_property_1615209429212/work
+boto3==1.26.125
+botocore==1.29.125
 certifi==2022.12.7
-cffi @ file:///C:/ci_311/cffi_1676423759166/work
-charset-normalizer==2.1.1
-click @ file:///D:/bld/click_1666798499870/work
-colorama @ file:///C:/ci_311/colorama_1676422310965/work
-comm @ file:///C:/ci_311/comm_1678376562840/work
-contourpy @ file:///C:/ci_311/contourpy_1676431756017/work
-cryptography @ file:///C:/ci_311/cryptography_1679419210767/work
-cycler @ file:///tmp/build/80754af9/cycler_1637851556182/work
-debugpy @ file:///C:/ci_311/debugpy_1676426137692/work
-decorator @ file:///opt/conda/conda-bld/decorator_1643638310831/work
+charset-normalizer==3.1.0
+colorama==0.4.6
+coloredlogs==15.0.1
+comm==0.1.3
+contourpy==1.0.7
+cycler==0.11.0
+debugpy==1.6.7
+decorator==5.1.1
 depthai==2.21.2.0
-executing @ file:///opt/conda/conda-bld/executing_1646925071911/work
-filelock==3.9.0
-fonttools==4.25.0
-fqdn @ file:///home/conda/feedstock_root/build_artifacts/fqdn_1638810296540/work/dist
-future @ file:///home/conda/feedstock_root/build_artifacts/future_1673596611778/work
-gitdb @ file:///home/conda/feedstock_root/build_artifacts/gitdb_1669279893622/work
-GitPython @ file:///home/conda/feedstock_root/build_artifacts/gitpython_1676637751542/work
-idna @ file:///home/conda/feedstock_root/build_artifacts/idna_1663625384323/work
-importlib-metadata @ file:///home/conda/feedstock_root/build_artifacts/importlib-metadata_1682176699712/work
-importlib-resources @ file:///home/conda/feedstock_root/build_artifacts/importlib_resources_1676919000169/work
-ipykernel @ file:///C:/ci_311/ipykernel_1678734799670/work
-ipython @ file:///C:/b/abs_d1yx5tjhli/croot/ipython_1680701887259/work
-isoduration @ file:///home/conda/feedstock_root/build_artifacts/isoduration_1638811571363/work/dist
-jedi @ file:///C:/ci_311/jedi_1679427407646/work
+executing==1.2.0
+filelock==3.12.0
+flatbuffers==23.3.3
+fonttools==4.39.3
+humanfriendly==10.0
+idna==3.4
+ipykernel==6.22.0
+ipython==8.13.1
+jedi==0.18.2
 Jinja2==3.1.2
-jmespath @ file:///home/conda/feedstock_root/build_artifacts/jmespath_1655568249366/work
-jsonpointer==2.0
-jsonref==0.2
-jsonschema @ file:///home/conda/feedstock_root/build_artifacts/jsonschema-meta_1669810440410/work
-jupyter_client @ file:///C:/b/abs_059idvdagk/croot/jupyter_client_1680171872444/work
-jupyter_core @ file:///C:/b/abs_9d0ttho3bs/croot/jupyter_core_1679906581955/work
-kiwisolver @ file:///C:/ci_311/kiwisolver_1676431979301/work
+jmespath==1.0.1
+jupyter_client==8.2.0
+jupyter_core==5.3.0
+kiwisolver==1.4.4
 markdown-it-py==2.2.0
 MarkupSafe==2.1.2
-matplotlib @ file:///C:/b/abs_49b2acwxd4/croot/matplotlib-suite_1679593486357/work
-matplotlib-inline @ file:///C:/ci_311/matplotlib-inline_1676425798036/work
+matplotlib==3.7.1
+matplotlib-inline==0.1.6
 mdurl==0.1.2
-mkl-fft==1.3.1
-mkl-random @ file:///C:/ci_311/mkl_random_1676481991689/work
-mkl-service==2.4.0
-monotonic==1.5
-mpmath==1.2.1
-msgpack @ file:///C:/ci_311/msgpack-python_1676427482892/work
-munkres==1.1.4
-neptune @ file:///home/conda/feedstock_root/build_artifacts/neptune_1682322029323/work
-nest-asyncio @ file:///C:/ci_311/nest-asyncio_1676423519896/work
-networkx==3.0
-numexpr @ file:///C:/ci_311_rebuilds/numexpr_1679001276672/work
-numpy==1.24.1
-oauthlib @ file:///home/conda/feedstock_root/build_artifacts/oauthlib_1666056362788/work
+mpmath==1.3.0
+nest-asyncio==1.5.6
+networkx==3.1
+numpy==1.24.3
 onnx==1.13.1
-onnxsim==0.4.26
+onnxruntime==1.14.1
+onnxsim==0.4.28
 opencv-python==4.7.0.72
-packaging @ file:///C:/b/abs_ed_kb9w6g4/croot/packaging_1678965418855/work
-pandas @ file:///C:/ci_311_rebuilds/pandas_1679004481142/work
-parso @ file:///opt/conda/conda-bld/parso_1641458642106/work
-pickleshare @ file:///tmp/build/80754af9/pickleshare_1606932040724/work
-Pillow==9.3.0
-pkgutil_resolve_name @ file:///home/conda/feedstock_root/build_artifacts/pkgutil-resolve-name_1633981968097/work
-platformdirs @ file:///C:/ci_311/platformdirs_1676422658103/work
-ply==3.11
-prompt-toolkit @ file:///C:/ci_311/prompt-toolkit_1676425940920/work
+packaging==23.1
+parso==0.8.3
+pickleshare==0.7.5
+Pillow==9.5.0
+platformdirs==3.5.0
+prompt-toolkit==3.0.38
 protobuf==3.20.3
-psutil @ file:///C:/ci_311_rebuilds/psutil_1679005906571/work
-pure-eval @ file:///opt/conda/conda-bld/pure_eval_1646925070566/work
-pycparser @ file:///home/conda/feedstock_root/build_artifacts/pycparser_1636257122734/work
-Pygments @ file:///opt/conda/conda-bld/pygments_1644249106324/work
-PyJWT @ file:///home/conda/feedstock_root/build_artifacts/pyjwt_1666240235902/work
-pyOpenSSL @ file:///home/conda/feedstock_root/build_artifacts/pyopenssl_1680037383858/work
-pyparsing @ file:///C:/ci_311/pyparsing_1678502182533/work
-PyQt5==5.15.7
-PyQt5-sip @ file:///C:/ci_311/pyqt-split_1676428895938/work/pyqt_sip
-pyrsistent @ file:///C:/ci_311/pyrsistent_1676422695500/work
-PySocks @ file:///D:/bld/pysocks_1661604991356/work
-python-dateutil @ file:///tmp/build/80754af9/python-dateutil_1626374649649/work
-pytz @ file:///C:/ci_311/pytz_1676427070848/work
-pywin32==305.1
-PyYAML @ file:///C:/ci_311/pyyaml_1676432488822/work
-pyzmq @ file:///C:/b/abs_8b16zbmf46/croot/pyzmq_1682697651374/work
-requests==2.28.1
-requests-oauthlib @ file:///home/conda/feedstock_root/build_artifacts/requests-oauthlib_1643557462909/work
-rfc3339-validator @ file:///home/conda/feedstock_root/build_artifacts/rfc3339-validator_1638811747357/work
-rfc3987==1.3.8
+psutil==5.9.5
+pure-eval==0.2.2
+Pygments==2.15.1
+pyparsing==3.0.9
+pyreadline3==3.4.1
+python-dateutil==2.8.2
+pywin32==306
+PyYAML==6.0
+pyzmq==25.0.2
+requests==2.29.0
 rich==13.3.5
-s3transfer @ file:///home/conda/feedstock_root/build_artifacts/s3transfer_1654039987929/work
-simplejson @ file:///C:/ci_311/simplejson_1676455998012/work
-sip @ file:///C:/ci_311/sip_1676427825172/work
-six @ file:///tmp/build/80754af9/six_1644875935023/work
-smmap @ file:///home/conda/feedstock_root/build_artifacts/smmap_1611376390914/work
-stack-data @ file:///opt/conda/conda-bld/stack_data_1646927590127/work
-swagger-spec-validator @ file:///home/conda/feedstock_root/build_artifacts/swagger-spec-validator_1667582568661/work
+s3transfer==0.6.0
+six==1.16.0
+stack-data==0.6.2
 sympy==1.11.1
-toml @ file:///tmp/build/80754af9/toml_1616166611790/work
-torch==2.0.0+cu118
-torchaudio==2.0.1+cu118
-torchvision==0.15.1+cu118
-tornado @ file:///C:/ci_311/tornado_1676423689414/work
-tqdm @ file:///C:/b/abs_f76j9hg7pv/croot/tqdm_1679561871187/work
-traitlets @ file:///C:/ci_311/traitlets_1676423290727/work
-typing_extensions==4.4.0
-uri-template @ file:///home/conda/feedstock_root/build_artifacts/uri-template_1647268373306/work/dist
-urllib3==1.26.13
-wcwidth @ file:///Users/ktietz/demo/mc3/conda-bld/wcwidth_1629357192024/work
-webcolors @ file:///home/conda/feedstock_root/build_artifacts/webcolors_1679900785843/work
-websocket-client @ file:///home/conda/feedstock_root/build_artifacts/websocket-client_1675567828044/work
-win-inet-pton @ file:///D:/bld/win_inet_pton_1667051142467/work
-zipp @ file:///home/conda/feedstock_root/build_artifacts/zipp_1677313463193/work
+torch==2.0.0
+tornado==6.3.1
+traitlets==5.9.0
+typing_extensions==4.5.0
+urllib3==1.26.15
+wcwidth==0.2.6

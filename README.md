@@ -8,24 +8,30 @@
 
 It is recommended to use a virtual environment. To create a virtual environment, run the following command.
 
-```bash
-python -m venv venv
+```powershell
+python -m venv .venv
 ```
 
 Activate the virtual environment.
 
-```bash
-source venv/bin/activate
+```powershell
+.\.venv\Scripts\activate
 ```
 
 Install dependencies.
 
-```bash
+```powershell
 pip install -r requirements.txt
 ```
 
 To run the program, run the following command.
 
-```bash
+```powershell
 python main.py
+```
+
+To deactivate the virtual environment, run the following command.
+
+```powershell
+deactivate
 ```

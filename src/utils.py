@@ -36,6 +36,61 @@ def pytorch_to_onnx(model: nn.Module, input_shape: tuple, simplify_onnx: bool = 
     return out_path_simple
 
 
+def cv2_put_xyz(frame, xyz, anchor, CONFIG):
+    x, y, z = xyz
+    ax, ay = anchor
+    cv2.putText(
+        img=frame,
+        text=f"X: {x} mm",
+        org=(ax + 10, ay + 20),
+        fontFace=CONFIG["display"]["font"],
+        fontScale=0.5,
+        color=CONFIG["display"]["line_color"],
+        lineType=CONFIG["display"]["line_type"]
+    )
+    cv2.putText(
+        img=frame,
+        text=f"Y: {y} mm",
+        org=(ax + 10, ay + 35),
+        fontFace=CONFIG["display"]["font"],
+        fontScale=0.5,
+        color=CONFIG["display"]["line_color"],
+        lineType=CONFIG["display"]["line_type"]
+    )
+    cv2.putText(
+        img=frame,
+        text=f"Z: {z} mm",
+        org=(ax + 10, ay + 50),
+        fontFace=CONFIG["display"]["font"],
+        fontScale=0.5,
+        color=CONFIG["display"]["line_color"],
+        lineType=CONFIG["display"]["line_type"]
+    )
+
+
+def cnt_centroid(cnt):
+    M = cv2.moments(cnt)
+    if M['m00'] == 0:
+        return None
+
+    cX = int(M["m10"] / M["m00"])
+    cY = int(M["m01"] / M["m00"])
+    centroid = np.array([[cX, cY]])
+    return centroid
+
+
+def circle_like(cnt):
+    centroid = cnt_centroid(cnt)
+    if centroid is None:
+        return 0
+
+    r_hat = np.linalg.norm(cnt[:, 0, :] - centroid, axis=1)
+    _, r_ref = cv2.minEnclosingCircle(cnt)
+
+    rms_error = np.sqrt(np.mean((r_ref - r_hat) ** 2))
+    return rms_error
+
+
 def extract_bounding_box(color_frame: npt.NDArray, bb_config: dict):
     frame = color_frame.copy()
     hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -60,7 +115,7 @@ def extract_bounding_box(color_frame: npt.NDArray, bb_config: dict):
         src=frame,
         ksize=bb_config["blur_size"]
     )
-    ret, frame = cv2.threshold(
+    _, frame = cv2.threshold(
         src=frame,
         thresh=bb_config["thresh"],
         maxval=255,
@@ -72,17 +127,29 @@ def extract_bounding_box(color_frame: npt.NDArray, bb_config: dict):
     )
 
     # Find contours
-    contours, hierarchy = cv2.findContours(
+    contours, _ = cv2.findContours(
         image=frame,
-        mode=cv2.RETR_TREE,
-        method=cv2.CHAIN_APPROX_SIMPLE
+        mode=cv2.RETR_LIST,
+        method=cv2.CHAIN_APPROX_NONE
     )
 
-    if len(contours) > 0:
-        cnt = contours[0]
-        x, y, w, h = cv2.boundingRect(cnt)
-        x2, y2 = x + w, y + h
-        return x, y, x2, y2
+    if len(contours) >= 2:
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:2]
+
+        # index 0 is always ORB, index 1 is always CAR
+        contours = sorted(contours, key=circle_like)
+
+        cnt_orb = contours[0]
+        orb_x, orb_y, orb_w, orb_h = cv2.boundingRect(cnt_orb)
+        orb_x2, orb_y2 = orb_x + orb_w, orb_y + orb_h
+        bb_orb = (orb_x, orb_y, orb_x2, orb_y2)
+
+        cnt_car = contours[1]
+        car_x, car_y, car_w, car_h = cv2.boundingRect(cnt_car)
+        car_x2, car_y2 = car_x + car_w, car_y + car_h
+        bb_car = (car_x, car_y, car_x2, car_y2)
+
+        return bb_orb, bb_car
 
     return None
 
