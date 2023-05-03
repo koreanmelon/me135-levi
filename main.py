@@ -1,3 +1,6 @@
+import threading
+from time import sleep
+
 import cv2
 import depthai as dai
 import numpy as np
@@ -5,6 +8,30 @@ import numpy.typing as npt
 
 from src.fps_handler import FPSHandler
 from src.utils import cv2_put_xyz, draw_box, extract_bounding_box
+
+finished = False
+
+
+def recv(device: dai.Device):
+    print("Started recv thread...")
+    print(device.getDeviceName())
+    print(device.getOutputQueueNames())
+    q: dai.DataOutputQueue = device.getOutputQueue(
+        name="control",
+        maxSize=10,
+        blocking=True
+    )
+    print(
+        f"Queue Properties: {q.getName()}, {q.getMaxSize()}, {q.getBlocking()}")
+
+    while not finished:
+        in_data = q.tryGet()
+        if in_data is not None:
+            with open("orb.txt", "a") as f:
+                instruction = ''.join([chr(i)
+                                      for i in in_data.getData()]) + '\n'
+                f.write(instruction)
+
 
 ################
 #### Config ####
@@ -45,13 +72,14 @@ CONFIG = {
     },
     "proc": {
         "image_size": (720, 1280),
-        "blur_size": (15, 15),
+        "blur_size": (10, 10),
         "H_thresh": 10,
-        "S_thresh": (250, 255),
+        "S_thresh": (200, 255),
         "V_thresh": (0, 255),
         "thresh": 25
     }
 }
+offset = np.array([130, 100, 50])
 
 
 if __name__ == "__main__":
@@ -71,6 +99,14 @@ if __name__ == "__main__":
     xout_spatial_data = pipeline.createXLinkOut()
     xin_spatial_calc_config = pipeline.createXLinkIn()
 
+    xin_xyz_orb = pipeline.createXLinkIn()
+    xin_xyz_car = pipeline.createXLinkIn()
+    xout_xyz_orb = pipeline.createXLinkOut()
+    xout_xyz_car = pipeline.createXLinkOut()
+
+    xin_control = pipeline.createXLinkIn()
+    xout_control = pipeline.createXLinkOut()
+
     # Color camera config
     camera_color.setBoardSocket(dai.CameraBoardSocket.RGB)
     camera_color.setResolution(CONFIG["pipeline"]["color_cam"]["resolution"])
@@ -85,6 +121,7 @@ if __name__ == "__main__":
     mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
     mono_left.setResolution(CONFIG["pipeline"]["mono_cam"]["resolution"])
     mono_left.setFps(CONFIG["pipeline"]["mono_cam"]["fps"])
+
     mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
     mono_right.setResolution(CONFIG["pipeline"]["mono_cam"]["resolution"])
     mono_right.setFps(CONFIG["pipeline"]["mono_cam"]["fps"])
@@ -124,6 +161,14 @@ if __name__ == "__main__":
     xout_spatial_data.setStreamName("spatial_data")
     xin_spatial_calc_config.setStreamName("spatial_calc_config")
 
+    xin_xyz_orb.setStreamName("xyz_orb")
+    xin_xyz_car.setStreamName("xyz_car")
+    xout_xyz_orb.setStreamName("xyz_orb")
+    xout_xyz_car.setStreamName("xyz_car")
+
+    xin_control.setStreamName("control")
+    xout_control.setStreamName("control")
+
     # Linking
     camera_color.isp.link(xout_color.input)
     mono_left.out.link(stereo.left)
@@ -135,37 +180,51 @@ if __name__ == "__main__":
 
     xin_spatial_calc_config.out.link(spatial_calc.inputConfig)
 
+    xin_xyz_orb.out.link(xout_xyz_orb.input)
+    xin_xyz_car.out.link(xout_xyz_car.input)
+    xin_control.out.link(xout_control.input)
+
+    # print(pipeline.serializeToJson())
+
     ###########################
     #### Device Connection ####
     ###########################
     with dai.Device() as device:
-        cams = device.getConnectedCameras()
-        depth_enabled = dai.CameraBoardSocket.LEFT in cams and dai.CameraBoardSocket.RIGHT in cams
-        if not depth_enabled:
-            raise RuntimeError(
-                f"Device lacks depth capabilities. Available cameras: {cams}")
-
-        # !!!Remove this if the device is already running a pipeline!!!
         device.startPipeline(pipeline)
 
         # Prioritize the latest input data
-        q_color: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
+        q_color: dai.DataOutputQueue = device.getOutputQueue(
             name="color",
             maxSize=1,
             blocking=False
         )
-        q_depth: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
+        q_depth: dai.DataOutputQueue = device.getOutputQueue(
             name="depth",
             maxSize=1,
             blocking=False
         )
-        q_spatial_calc: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
+        q_spatial_calc: dai.DataOutputQueue = device.getOutputQueue(
             name="spatial_data",
             maxSize=1,
             blocking=False
         )
-        q_spatial_calc_config: dai.DataInputQueue = device.getInputQueue(  # type: ignore
+        q_spatial_calc_config: dai.DataInputQueue = device.getInputQueue(
             name="spatial_calc_config"
+        )
+        q_xin_xyz_orb: dai.DataInputQueue = device.getInputQueue(
+            name="xyz_orb",
+            maxSize=10,
+            blocking=False
+        )
+        q_xin_xyz_car: dai.DataInputQueue = device.getInputQueue(
+            name="xyz_car",
+            maxSize=10,
+            blocking=False
+        )
+        q_xin_control: dai.DataInputQueue = device.getInputQueue(
+            name="control",
+            maxSize=10,
+            blocking=False
         )
 
         fps_handler = FPSHandler()
@@ -188,12 +247,16 @@ if __name__ == "__main__":
         orb_x1, orb_y1, orb_x2, orb_y2 = 0, 0, 0, 0
         bounding_box_orb = (orb_x1, orb_y1, orb_x2, orb_y2)
 
+        # thread = threading.Thread(target=recv, args=(device,), daemon=True)
+        # thread.start()
+
         #########################################
         #### Main host-side application loop ####
         #########################################
         while True:
+            # Process color frame
             in_color = q_color.get()
-            frames["color"] = in_color.getCvFrame()  # type: ignore
+            frames["color"] = in_color.getCvFrame()
             frames["out"] = frames["color"].copy()
 
             bb = extract_bounding_box(
@@ -207,6 +270,7 @@ if __name__ == "__main__":
                 }
             )
 
+            # Configure depth frame
             if bb is not None:
                 bounding_box_orb, bounding_box_car = bb
 
@@ -240,7 +304,7 @@ if __name__ == "__main__":
             draw_box(frames["out"], bounding_box_orb, CONFIG, (0, 255, 255))
             cv2.putText(
                 img=frames["out"],
-                text="ORB",
+                text=f"ORB: {orb_x1}, {orb_y1}",
                 org=(orb_x1, orb_y1 - 10),
                 fontFace=CONFIG["display"]["font"],
                 fontScale=0.5,
@@ -251,7 +315,7 @@ if __name__ == "__main__":
             draw_box(frames["out"], bounding_box_car, CONFIG, (0, 255, 255))
             cv2.putText(
                 img=frames["out"],
-                text="CAR",
+                text=f"CAR: {car_x1}, {car_y1}",
                 org=(car_x1, car_y1 - 10),
                 fontFace=CONFIG["display"]["font"],
                 fontScale=0.5,
@@ -259,13 +323,15 @@ if __name__ == "__main__":
                 lineType=CONFIG["display"]["line_type"]
             )
 
+            # Process depth frame
             in_depth = q_depth.get()
-            frames["depth"] = in_depth.getFrame()  # type: ignore
+            frames["depth"] = in_depth.getFrame()
 
             in_spatial_data = q_spatial_calc.get()
-            spatial_data = in_spatial_data.getSpatialLocations()  # type: ignore
+            spatial_data: list[dai.SpatialLocations] = in_spatial_data.getSpatialLocations(
+            )
 
-            depth_downscaled = frames["depth"][::4]
+            depth_downscaled = frames["depth"]
             min_depth = np.percentile(
                 depth_downscaled[depth_downscaled != 0], 1)
             max_depth = np.percentile(depth_downscaled, 99)
@@ -274,9 +340,10 @@ if __name__ == "__main__":
                 xp=(min_depth, max_depth),
                 fp=(0, 255)
             ).astype(np.uint8)
-            frames["depth_color"] = cv2.applyColorMap(
-                frames["depth_color"], cv2.COLORMAP_HOT)
 
+            xyz_data: list[npt.NDArray] = []
+
+            # Draw depth ROI
             for depth_data in spatial_data:
                 roi = depth_data.config.roi
                 roi = roi.denormalize(
@@ -290,23 +357,89 @@ if __name__ == "__main__":
 
                 depth_min = depth_data.depthMin
                 depth_max = depth_data.depthMax
+                xyz = np.array(
+                    [depth_data.spatialCoordinates.x,
+                     depth_data.spatialCoordinates.y,
+                     depth_data.spatialCoordinates.z],
+                    dtype=np.int32)
+
+                xyz_data.append(xyz)
 
                 draw_box(frames["out"], (xmin, ymin, xmax, ymax), CONFIG)
                 cv2_put_xyz(
                     frame=frames["out"],
-                    xyz=(
-                        int(depth_data.spatialCoordinates.x),
-                        int(depth_data.spatialCoordinates.y),
-                        int(depth_data.spatialCoordinates.z)
-                    ),
+                    xyz=xyz,
                     anchor=(xmax, ymin),
                     CONFIG=CONFIG
                 )
 
+            vec = xyz_data[1] - xyz_data[0]
+            vec -= offset
+
+            mov_thresh = 10
+
+            instructions = []
+            if vec[0] > mov_thresh:
+                instructions.append("right")
+            elif vec[0] < -mov_thresh:
+                instructions.append("left")
+
+            if vec[1] > mov_thresh:
+                instructions.append("up")
+            elif vec[1] < -mov_thresh:
+                instructions.append("down")
+
+            if vec[2] > mov_thresh:
+                instructions.append("forward")
+            elif vec[2] < -mov_thresh:
+                instructions.append("backward")
+
+            instr_out: list[str] = []
+            for instruction in instructions:
+                if instruction == "right":
+                    instr_out.append("s1right")
+                    instr_out.append("s2left")
+                elif instruction == "left":
+                    instr_out.append("s1left")
+                    instr_out.append("s2right")
+                elif instruction == "up":
+                    instr_out.append("s1up")
+                    instr_out.append("s2down")
+                elif instruction == "down":
+                    instr_out.append("s1down")
+                    instr_out.append("s2up")
+                elif instruction == "forward":
+                    pass
+                elif instruction == "backward":
+                    pass
+                else:
+                    raise RuntimeError("Unknown instruction")
+
+            out_str = " ".join(instr_out)
+
+            out_vec = [ord(c) for c in out_str]
+
+            # Send xyz data to device (to be read from another thread)
+            buf_orb = dai.Buffer()
+            buf_orb.setData(xyz_data[0])
+            buf_car = dai.Buffer()
+            buf_car.setData(xyz_data[1])
+
+            buf_control = dai.Buffer()
+            buf_control.setData(out_vec)
+
+            q_xin_xyz_orb.send(buf_orb)
+            q_xin_xyz_car.send(buf_car)
+
+            q_xin_control.send(buf_control)
+
+            # Draw output frame
             fps_handler.update()
             fps_handler.draw(frames["out"], CONFIG)
 
             cv2.imshow("Custom Object Tracker", frames["out"])
 
             if cv2.waitKey(1) == ord('q'):
+                finished = True
+                # thread.join()
                 break
