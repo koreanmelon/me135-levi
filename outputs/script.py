@@ -1,4 +1,5 @@
 import os
+import pickle
 from time import time_ns
 
 import cv2
@@ -266,16 +267,18 @@ CONFIG = {
     },
     "proc": {
         "image_size": (720, 1280),
-        "blur_size": (15, 15),
+        "blur_size": (10, 10),
         "H_thresh": 10,
-        "S_thresh": (250, 255),
+        "S_thresh": (200, 255),
         "V_thresh": (0, 255),
         "thresh": 25
     }
 }
+offset = np.array([130, 100, 50])
+lateral_step = 2
 
 
-def main():
+if __name__ == "__main__":
     ##################
     #### Pipeline ####
     ##################
@@ -306,6 +309,7 @@ def main():
     mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
     mono_left.setResolution(CONFIG["pipeline"]["mono_cam"]["resolution"])
     mono_left.setFps(CONFIG["pipeline"]["mono_cam"]["fps"])
+
     mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
     mono_right.setResolution(CONFIG["pipeline"]["mono_cam"]["resolution"])
     mono_right.setFps(CONFIG["pipeline"]["mono_cam"]["fps"])
@@ -359,33 +363,25 @@ def main():
     ###########################
     #### Device Connection ####
     ###########################
-    with dai.Device() as device:
-        cams = device.getConnectedCameras()
-        depth_enabled = dai.CameraBoardSocket.LEFT in cams and dai.CameraBoardSocket.RIGHT in cams
-        if not depth_enabled:
-            raise RuntimeError(
-                f"Device lacks depth capabilities. Available cameras: {cams}")
-
-        # !!!Remove this if the device is already running a pipeline!!!
-        device.startPipeline(pipeline)
+    with dai.Device(pipeline) as device:
 
         # Prioritize the latest input data
-        q_color: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
+        q_color: dai.DataOutputQueue = device.getOutputQueue(
             name="color",
             maxSize=1,
             blocking=False
         )
-        q_depth: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
+        q_depth: dai.DataOutputQueue = device.getOutputQueue(
             name="depth",
             maxSize=1,
             blocking=False
         )
-        q_spatial_calc: dai.DataOutputQueue = device.getOutputQueue(  # type: ignore
+        q_spatial_calc: dai.DataOutputQueue = device.getOutputQueue(
             name="spatial_data",
             maxSize=1,
             blocking=False
         )
-        q_spatial_calc_config: dai.DataInputQueue = device.getInputQueue(  # type: ignore
+        q_spatial_calc_config: dai.DataInputQueue = device.getInputQueue(
             name="spatial_calc_config"
         )
 
@@ -409,12 +405,20 @@ def main():
         orb_x1, orb_y1, orb_x2, orb_y2 = 0, 0, 0, 0
         bounding_box_orb = (orb_x1, orb_y1, orb_x2, orb_y2)
 
+        queue_size = 30
+        orb_xyz_data = np.empty((queue_size, 3), dtype=np.float32)
+        car_xyz_data = np.empty((queue_size, 3), dtype=np.float32)
+
+        x_counter = 0
+        y_counter = 0
+
         #########################################
         #### Main host-side application loop ####
         #########################################
         while True:
+            # Process color frame
             in_color = q_color.get()
-            frames["color"] = in_color.getCvFrame()  # type: ignore
+            frames["color"] = in_color.getCvFrame()
             frames["out"] = frames["color"].copy()
 
             bb = extract_bounding_box(
@@ -428,6 +432,7 @@ def main():
                 }
             )
 
+            # Configure depth frame
             if bb is not None:
                 bounding_box_orb, bounding_box_car = bb
 
@@ -461,7 +466,7 @@ def main():
             draw_box(frames["out"], bounding_box_orb, CONFIG, (0, 255, 255))
             cv2.putText(
                 img=frames["out"],
-                text="ORB",
+                text=f"ORB: {orb_x1}, {orb_y1}",
                 org=(orb_x1, orb_y1 - 10),
                 fontFace=CONFIG["display"]["font"],
                 fontScale=0.5,
@@ -472,7 +477,7 @@ def main():
             draw_box(frames["out"], bounding_box_car, CONFIG, (0, 255, 255))
             cv2.putText(
                 img=frames["out"],
-                text="CAR",
+                text=f"CAR: {car_x1}, {car_y1}",
                 org=(car_x1, car_y1 - 10),
                 fontFace=CONFIG["display"]["font"],
                 fontScale=0.5,
@@ -480,13 +485,15 @@ def main():
                 lineType=CONFIG["display"]["line_type"]
             )
 
+            # Process depth frame
             in_depth = q_depth.get()
-            frames["depth"] = in_depth.getFrame()  # type: ignore
+            frames["depth"] = in_depth.getFrame()
 
             in_spatial_data = q_spatial_calc.get()
-            spatial_data = in_spatial_data.getSpatialLocations()  # type: ignore
+            spatial_data: list[dai.SpatialLocations] = in_spatial_data.getSpatialLocations(
+            )
 
-            depth_downscaled = frames["depth"][::4]
+            depth_downscaled = frames["depth"][::4, ::4]
             min_depth = np.percentile(
                 depth_downscaled[depth_downscaled != 0], 1)
             max_depth = np.percentile(depth_downscaled, 99)
@@ -495,9 +502,10 @@ def main():
                 xp=(min_depth, max_depth),
                 fp=(0, 255)
             ).astype(np.uint8)
-            frames["depth_color"] = cv2.applyColorMap(
-                frames["depth_color"], cv2.COLORMAP_HOT)
 
+            xyz_data: list[npt.NDArray] = []
+
+            # Draw depth ROI
             for depth_data in spatial_data:
                 roi = depth_data.config.roi
                 roi = roi.denormalize(
@@ -511,19 +519,120 @@ def main():
 
                 depth_min = depth_data.depthMin
                 depth_max = depth_data.depthMax
+                xyz = np.array(
+                    [depth_data.spatialCoordinates.x,
+                     depth_data.spatialCoordinates.y,
+                     depth_data.spatialCoordinates.z],
+                    dtype=np.int32)
+
+                xyz_data.append(xyz)
 
                 draw_box(frames["out"], (xmin, ymin, xmax, ymax), CONFIG)
                 cv2_put_xyz(
                     frame=frames["out"],
-                    xyz=(
-                        int(depth_data.spatialCoordinates.x),
-                        int(depth_data.spatialCoordinates.y),
-                        int(depth_data.spatialCoordinates.z)
-                    ),
+                    xyz=xyz,
                     anchor=(xmax, ymin),
                     CONFIG=CONFIG
                 )
 
+            orb_pos = xyz_data[0]
+            np.roll(orb_xyz_data, -1, axis=0)
+            orb_xyz_data[-1] = orb_pos
+
+            car_pos = xyz_data[1]
+            np.roll(car_xyz_data, -1, axis=0)
+            car_xyz_data[-1] = car_pos
+
+            dir_vec = car_pos - orb_pos
+            dir_vec -= offset
+
+            instr_vec = np.sign(dir_vec)
+
+            dir_mapping = np.array([
+                ["None", "right", "left"],
+                ["None", "up", "down"],
+                ["None", "forward", "backward"]
+            ])
+
+            subdir_mapping = np.array([
+                ["None",
+                 lateral_step * "s1right s2left ",
+                 lateral_step * "s1left s2right "],
+                ["None",
+                 lateral_step * "s1up s2down ",
+                 lateral_step * "s1down s2up "],
+                ["None", "forward", "backward"]
+            ])
+
+            instructions = "".join([subdir_mapping[i][instr_vec[i]]
+                                   for i in range(3)]).strip().split()
+
+            x_mapping = {
+                "s1right": 1,
+                "s1left": -1,
+                "s2right": 0.5,
+                "s2left": -0.5
+            }
+
+            y_mapping = {
+                "s1up": 1,
+                "s1down": -1,
+                "s2up": 0.5,
+                "s2down": -0.5
+            }
+
+            for i, ins in enumerate(instructions):
+                if ins in x_mapping:
+                    x_counter += x_mapping[ins]
+                elif ins in y_mapping:
+                    y_counter += y_mapping[ins]
+                else:
+                    if ins == "forward":
+                        tmp = []
+                        if x_counter > 0:
+                            tmp.extend(["s2right", "s2right", "s1left"])
+                        elif x_counter < 0:
+                            tmp.extend(["s2left", "s2left", "s1right"])
+
+                        if y_counter > 0:
+                            tmp.extend(["s2up", "s2up", "s1down"])
+                        elif y_counter < 0:
+                            tmp.extend(["s2down", "s2down", "s1up"])
+
+                        instructions[i] = tmp
+                    elif ins == "backward":
+                        tmp = []
+                        if x_counter > 0:
+                            tmp.extend(["s2left", "s2left", "s1right"])
+                        elif x_counter < 0:
+                            tmp.extend(["s2right", "s2right", "s1left"])
+
+                        if y_counter > 0:
+                            tmp.extend(["s2down", "s2down", "s1up"])
+                        elif y_counter < 0:
+                            tmp.extend(["s2up", "s2up", "s1down"])
+
+                        instructions[i] = tmp
+
+            tmp = []
+            for ins in instructions:
+                if isinstance(ins, list):
+                    tmp.extend(ins)
+                else:
+                    tmp.append(ins)
+
+            instructions = tmp
+
+            with open("data_orb.pkl", "wb") as f:
+                pickle.dump(orb_xyz_data, f)
+
+            with open("data_car.pkl", "wb") as f:
+                pickle.dump(car_xyz_data, f)
+
+            with open("data_ins.pkl", "wb") as f:
+                pickle.dump(" ".join(instructions), f)
+
+            # Draw output frame
             fps_handler.update()
             fps_handler.draw(frames["out"], CONFIG)
 

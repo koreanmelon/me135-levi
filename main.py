@@ -1,5 +1,4 @@
 import pickle
-from functools import reduce
 
 import cv2
 import depthai as dai
