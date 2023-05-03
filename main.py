@@ -1,4 +1,5 @@
 import pickle
+from functools import reduce
 
 import cv2
 import depthai as dai
@@ -189,6 +190,9 @@ if __name__ == "__main__":
         orb_xyz_data = np.empty((queue_size, 3), dtype=np.float32)
         car_xyz_data = np.empty((queue_size, 3), dtype=np.float32)
 
+        x_counter = 0
+        y_counter = 0
+
         #########################################
         #### Main host-side application loop ####
         #########################################
@@ -341,7 +345,64 @@ if __name__ == "__main__":
                 ["None", "forward", "backward"]
             ])
 
-            instructions = [subdir_mapping[i][instr_vec[i]] for i in range(3)]
+            instructions = "".join([subdir_mapping[i][instr_vec[i]]
+                                   for i in range(3)]).strip().split()
+
+            x_mapping = {
+                "s1right": 1,
+                "s1left": -1,
+                "s2right": 0.5,
+                "s2left": -0.5
+            }
+
+            y_mapping = {
+                "s1up": 1,
+                "s1down": -1,
+                "s2up": 0.5,
+                "s2down": -0.5
+            }
+
+            for i, ins in enumerate(instructions):
+                if ins in x_mapping:
+                    x_counter += x_mapping[ins]
+                elif ins in y_mapping:
+                    y_counter += y_mapping[ins]
+                else:
+                    if ins == "forward":
+                        tmp = []
+                        if x_counter > 0:
+                            tmp.extend(["s2right", "s2right", "s1left"])
+                        elif x_counter < 0:
+                            tmp.extend(["s2left", "s2left", "s1right"])
+
+                        if y_counter > 0:
+                            tmp.extend(["s2up", "s2up", "s1down"])
+                        elif y_counter < 0:
+                            tmp.extend(["s2down", "s2down", "s1up"])
+
+                        instructions[i] = tmp
+                    elif ins == "backward":
+                        tmp = []
+                        if x_counter > 0:
+                            tmp.extend(["s2left", "s2left", "s1right"])
+                        elif x_counter < 0:
+                            tmp.extend(["s2right", "s2right", "s1left"])
+
+                        if y_counter > 0:
+                            tmp.extend(["s2down", "s2down", "s1up"])
+                        elif y_counter < 0:
+                            tmp.extend(["s2up", "s2up", "s1down"])
+
+                        instructions[i] = tmp
+
+            tmp = []
+            for ins in instructions:
+                if isinstance(ins, list):
+                    tmp.extend(ins)
+                else:
+                    tmp.append(ins)
+
+            instructions = tmp
 
             with open("data_orb.pkl", "wb") as f:
                 pickle.dump(orb_xyz_data, f)
@@ -350,7 +411,7 @@ if __name__ == "__main__":
                 pickle.dump(car_xyz_data, f)
 
             with open("data_ins.pkl", "wb") as f:
-                pickle.dump("".join(instructions).strip(), f)
+                pickle.dump(" ".join(instructions), f)
 
             # Draw output frame
             fps_handler.update()
