@@ -403,13 +403,13 @@ if __name__ == "__main__":
 
             instructions = tmp
 
-            with open("data_orb.pkl", "wb") as f:
+            with open("./outputs/data_orb.pkl", "wb") as f:
                 pickle.dump(orb_xyz_data, f)
 
-            with open("data_car.pkl", "wb") as f:
+            with open("./outputs/data_car.pkl", "wb") as f:
                 pickle.dump(car_xyz_data, f)
 
-            with open("data_ins.pkl", "wb") as f:
+            with open("./outputs/data_ins.pkl", "wb") as f:
                 pickle.dump(instructions, f)
 
             # Draw output frame
