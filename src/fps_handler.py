@@ -1,8 +1,8 @@
-import cv2
-import numpy.typing as npt
 from time import time_ns
 
+import cv2
 import numpy as np
+import numpy.typing as npt
 
 
 class FPSHandler:

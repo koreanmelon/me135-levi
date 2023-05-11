@@ -95,8 +95,7 @@ if __name__ == "__main__":
     mono_right.setFps(CONFIG["pipeline"]["mono_cam"]["fps"])
 
     # Stereo depth
-    stereo.setDefaultProfilePreset(
-        dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+    stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
     stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
     stereo.initialConfig.setConfidenceThreshold(255)
     stereo.setLeftRightCheck(True)
@@ -104,21 +103,17 @@ if __name__ == "__main__":
 
     # Spatial location calculator
     spatial_cfg_orb = dai.SpatialLocationCalculatorConfigData()
-    spatial_cfg_orb.roi = dai.Rect(
-        CONFIG["pipeline"]["spatial"]["roi"]["xy_min"], CONFIG["pipeline"]["spatial"]["roi"]["xy_max"])
-    spatial_cfg_orb.depthThresholds.lowerThreshold = CONFIG["pipeline"][
-        "spatial"]["depth_thresholds"]["lower"]
-    spatial_cfg_orb.depthThresholds.upperThreshold = CONFIG["pipeline"][
-        "spatial"]["depth_thresholds"]["upper"]
+    spatial_cfg_orb.roi = dai.Rect(CONFIG["pipeline"]["spatial"]["roi"]["xy_min"],
+                                   CONFIG["pipeline"]["spatial"]["roi"]["xy_max"])
+    spatial_cfg_orb.depthThresholds.lowerThreshold = CONFIG["pipeline"]["spatial"]["depth_thresholds"]["lower"]
+    spatial_cfg_orb.depthThresholds.upperThreshold = CONFIG["pipeline"]["spatial"]["depth_thresholds"]["upper"]
     spatial_cfg_orb.calculationAlgorithm = CONFIG["pipeline"]["spatial"]["algo"]
 
     spatial_cfg_car = dai.SpatialLocationCalculatorConfigData()
-    spatial_cfg_car.roi = dai.Rect(
-        CONFIG["pipeline"]["spatial"]["roi"]["xy_min"], CONFIG["pipeline"]["spatial"]["roi"]["xy_max"])
-    spatial_cfg_car.depthThresholds.lowerThreshold = CONFIG["pipeline"][
-        "spatial"]["depth_thresholds"]["lower"]
-    spatial_cfg_car.depthThresholds.upperThreshold = CONFIG["pipeline"][
-        "spatial"]["depth_thresholds"]["upper"]
+    spatial_cfg_car.roi = dai.Rect(CONFIG["pipeline"]["spatial"]["roi"]["xy_min"],
+                                   CONFIG["pipeline"]["spatial"]["roi"]["xy_max"])
+    spatial_cfg_car.depthThresholds.lowerThreshold = CONFIG["pipeline"]["spatial"]["depth_thresholds"]["lower"]
+    spatial_cfg_car.depthThresholds.upperThreshold = CONFIG["pipeline"]["spatial"]["depth_thresholds"]["upper"]
     spatial_cfg_car.calculationAlgorithm = CONFIG["pipeline"]["spatial"]["algo"]
 
     spatial_calc.inputConfig.setWaitForMessage(False)
@@ -335,12 +330,8 @@ if __name__ == "__main__":
             ])
 
             subdir_mapping = np.array([
-                ["None",
-                 lateral_step * "s1right s2left ",
-                 lateral_step * "s1left s2right "],
-                ["None",
-                 lateral_step * "s1up s2down ",
-                 lateral_step * "s1down s2up "],
+                ["None", lateral_step * "s1right s2left ", lateral_step * "s1left s2right "],
+                ["None", lateral_step * "s1up s2down ", lateral_step * "s1down s2up "],
                 ["None", "forward", "backward"]
             ])
 
