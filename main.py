@@ -41,8 +41,7 @@ CONFIG = {
             "depth_thresholds": {
                 "lower": 100,
                 "upper": 10000
-            },
-            "algo": dai.SpatialLocationCalculatorAlgorithm.MEDIAN
+            }
         }
     },
     "proc": {
@@ -107,14 +106,14 @@ if __name__ == "__main__":
                                    CONFIG["pipeline"]["spatial"]["roi"]["xy_max"])
     spatial_cfg_orb.depthThresholds.lowerThreshold = CONFIG["pipeline"]["spatial"]["depth_thresholds"]["lower"]
     spatial_cfg_orb.depthThresholds.upperThreshold = CONFIG["pipeline"]["spatial"]["depth_thresholds"]["upper"]
-    spatial_cfg_orb.calculationAlgorithm = CONFIG["pipeline"]["spatial"]["algo"]
+    spatial_cfg_orb.calculationAlgorithm = dai.SpatialLocationCalculatorAlgorithm.MEDIAN
 
     spatial_cfg_car = dai.SpatialLocationCalculatorConfigData()
     spatial_cfg_car.roi = dai.Rect(CONFIG["pipeline"]["spatial"]["roi"]["xy_min"],
                                    CONFIG["pipeline"]["spatial"]["roi"]["xy_max"])
     spatial_cfg_car.depthThresholds.lowerThreshold = CONFIG["pipeline"]["spatial"]["depth_thresholds"]["lower"]
     spatial_cfg_car.depthThresholds.upperThreshold = CONFIG["pipeline"]["spatial"]["depth_thresholds"]["upper"]
-    spatial_cfg_car.calculationAlgorithm = CONFIG["pipeline"]["spatial"]["algo"]
+    spatial_cfg_car.calculationAlgorithm = dai.SpatialLocationCalculatorAlgorithm.MEDIAN
 
     spatial_calc.inputConfig.setWaitForMessage(False)
     spatial_calc.initialConfig.addROI(spatial_cfg_orb)

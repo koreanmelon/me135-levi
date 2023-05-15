@@ -6,6 +6,8 @@
 
 ## Quick Start
 
+This repo was designed to run on Windows. However, it'll likely work on other operating systems as well as long as the OAK-D Lite camera is connected/linked properly.
+
 It is recommended to use a virtual environment. To create a virtual environment, run the following command.
 
 ```powershell
