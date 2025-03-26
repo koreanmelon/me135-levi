@@ -39,7 +39,7 @@ numpy==1.24.3
 onnx==1.13.1
 onnxruntime==1.14.1
 onnxsim==0.4.28
-opencv-python==4.7.0.72
+opencv-python==4.8.1.78
 packaging==23.1
 parso==0.8.3
 pickleshare==0.7.5
